@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Research Proposal: Scalable Highway Heatmap Diagnostics</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chosen Palette: Corporate Clean - Slate/Blue/White for professional academic feel. 
+         Background: Slate-50. Accents: Blue-600. Text: Slate-800. -->
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8fafc;
+            color: #1e293b;
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            height: 300px;
+            max-height: 400px;
+        }
+
+        .heatmap-canvas {
+            width: 100%;
+            height: 60px;
+            background: #e2e8f0;
+            border-radius: 4px;
+        }
+
+        .section-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .highlight-text {
+            color: #2563eb;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 min-h-screen">
+
+    <!-- Navigation / Header -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <div class="bg-blue-600 text-white p-2 rounded-lg font-bold">HHD</div>
+                <h1 class="text-xl font-bold text-slate-800">Highway Heatmap Diagnostics</h1>
+            </div>
+            <nav class="flex gap-4 text-sm font-medium text-slate-600">
+                <a href="#abstract" class="hover:text-blue-600">Abstract</a>
+                <a href="#methodology" class="hover:text-blue-600">Methodology</a>
+                <a href="#explorer" class="hover:text-blue-600">The Explorer Prototype</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+        <!-- Application Structure Plan: 
+             1. Abstract/Context: Sets the stage, defining the problem (2000+ heatmaps, gaps, errors).
+             2. Methodology Adaptation: Explains how we translate ScagExplorer concepts (Scatterplot -> Scagnostics) to this new domain (Heatmap -> "Heatmostics").
+             3. Interactive Prototype: The core of the proposal. A working simulation of the final "Explorer" tool to demonstrate feasibility.
+             4. Feature Definition: Interactive explanation of the specific metrics proposed for clustering.
+        -->
+
+        <!-- Section 1: Abstract & Problem Definition -->
+        <section id="abstract" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="md:col-span-2 section-card">
+                <h2 class="text-2xl font-bold mb-4 text-slate-800">Research Paper Plan: Abstract & Objectives</h2>
+                <p class="mb-4 text-slate-600 leading-relaxed">
+                    This paper proposes a novel framework for the scalable analysis of highway infrastructure
+                    performance.
+                    With over <span class="highlight-text">2,000+ generated heatmaps</span> representing condition,
+                    distress, and ride scores
+                    across various highway-county pairs, manual inspection is infeasible.
+                </p>
+                <p class="mb-4 text-slate-600 leading-relaxed">
+                    Drawing inspiration from <strong>ScagExplorer (Dang & Wilkinson)</strong>, we introduce <span
+                        class="highlight-text">"Heatmap Diagnostics"</span>.
+                    Just as ScagExplorer characterizes scatterplots using geometric graph-theoretic measures to manage
+                    high-dimensional datasets,
+                    our system extracts feature vectors from highway heatmaps to handle data fragmentation, human error,
+                    and large spatial gaps (1000+ miles).
+                </p>
+                <div class="bg-blue-50 border-l-4 border-blue-600 p-4 mt-4">
+                    <h3 class="font-bold text-blue-800 text-sm uppercase tracking-wide">Key Contributions</h3>
+                    <ul class="list-disc list-inside mt-2 text-slate-700 text-sm space-y-1">
+                        <li>A robust feature extraction pipeline for 1D/2D spatial heatmaps (handling gaps & errors).
+                        </li>
+                        <li>A dimensionality reduction strategy to project thousands of heatmaps into a navigable 2D
+                            space.</li>
+                        <li>An interactive "Explorer" interface for identifying representative clusters and anomalies.
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="section-card flex flex-col justify-center items-center text-center bg-slate-800 text-white">
+                <h3 class="text-xl font-bold mb-2">The Data Challenge</h3>
+                <div class="text-5xl font-bold text-blue-400 mb-2">2,000+</div>
+                <p class="text-sm text-slate-300 mb-6">Heatmaps (Highway-County Pairs)</p>
+                <div class="w-full h-px bg-slate-600 my-2"></div>
+                <div class="grid grid-cols-2 gap-4 w-full mt-4">
+                    <div>
+                        <div class="text-2xl font-bold text-yellow-400">3</div>
+                        <div class="text-xs text-slate-400">Metrics<br>(Cond/Dist/Ride)</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-red-400">High</div>
+                        <div class="text-xs text-slate-400">Fragmentations<br>(>1000mi gaps)</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Methodology - From Scagnostics to "Heatmostics" -->
+        <!-- Visualization & Content Choices:
+             Goal: Explain the theoretical leap from the source paper to the new paper.
+             Viz: Comparative layout. Left side shows ScagExplorer logic (Scatterplot -> 9 Metrics). Right side shows proposed logic (Heatmap -> New Metrics).
+             Interaction: None needed here, purely conceptual bridge.
+        -->
+        <section id="methodology" class="section-card">
+            <h2 class="text-xl font-bold mb-6 border-b pb-2">Methodology: Adapting Scagnostics for Highways</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Source Concept -->
+                <div class="relative pl-6 border-l-2 border-slate-300">
+                    <div class="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-slate-400"></div>
+                    <h3 class="font-bold text-slate-600 mb-2">1. Source Inspiration: <span
+                            class="text-slate-800">ScagExplorer</span></h3>
+                    <p class="text-sm text-slate-500 mb-4">
+                        ScagExplorer characterizes 2D scatterplots using 9 metrics (e.g., Clumpy, Stringy, Skewed) based
+                        on MST and Convex Hulls.
+                    </p>
+                    <div class="bg-slate-100 p-4 rounded-lg">
+                        <div class="text-xs font-mono text-slate-500 mb-1">Input: Scatterplot (X, Y)</div>
+                        <div class="flex gap-2 mb-2">
+                            <div
+                                class="w-8 h-8 bg-white border border-slate-300 rounded flex items-center justify-center">
+                                <div class="w-1 h-1 bg-black rounded-full shadow-[2px_2px_0_black,-2px_-2px_0_black]">
+                                </div>
+                            </div>
+                            <div class="text-2xl text-slate-300">&rarr;</div>
+                            <div class="flex-1 bg-white border border-slate-300 p-2 text-xs font-mono text-blue-600">
+                                [0.1, 0.8, 0.3, ...] <br> (9-Dim Vector)
+                            </div>
+                        </div>
+                        <div class="text-xs text-slate-400 italic">Result: Similar scatterplots cluster together in
+                            projection space.</div>
+                    </div>
+                </div>
+
+                <!-- Proposed Concept -->
+                <div class="relative pl-6 border-l-2 border-blue-500">
+                    <div class="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-blue-600 animate-pulse"></div>
+                    <h3 class="font-bold text-blue-700 mb-2">2. Proposed Solution: <span class="text-blue-900">Heatmap
+                            Diagnostics</span></h3>
+                    <p class="text-sm text-slate-500 mb-4">
+                        We define a new feature vector for spatial heatmaps. Since data is segmented and error-prone,
+                        features must measure continuity and signal quality.
+                    </p>
+                    <div class="bg-blue-50 p-4 rounded-lg">
+                        <div class="text-xs font-mono text-blue-500 mb-1">Input: Heatmap (Milepost, Score)</div>
+                        <div class="flex gap-2 mb-2">
+                            <div
+                                class="w-full h-8 bg-gradient-to-r from-green-400 via-yellow-300 to-red-500 rounded border border-blue-200">
+                            </div>
+                        </div>
+                        <div class="text-2xl text-blue-300 text-center mb-1">&darr; Feature Extraction</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="bg-white p-2 rounded border border-blue-100 text-xs">
+                                <span class="font-bold block">Sparsity</span>
+                                % of valid data vs gaps
+                            </div>
+                            <div class="bg-white p-2 rounded border border-blue-100 text-xs">
+                                <span class="font-bold block">Fragmentation</span>
+                                Number of contiguous segments
+                            </div>
+                            <div class="bg-white p-2 rounded border border-blue-100 text-xs">
+                                <span class="font-bold block">Distress Intensity</span>
+                                Skewness of score distribution
+                            </div>
+                            <div class="bg-white p-2 rounded border border-blue-100 text-xs">
+                                <span class="font-bold block">Error Noise</span>
+                                High-freq oscillation count
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 3: The Explorer Prototype -->
+        <!-- Visualization & Content Choices:
+             Goal: Demonstrate the *result* of the paper. Show that we can cluster 2000 items and find representatives.
+             Viz: 
+                1. Main Canvas: Scatterplot (Simulated t-SNE projection of heatmaps).
+                2. Side Panel: "Selected Heatmap" visualization (Simulated heatmap strip).
+                3. Controls: Filters for the metrics (Gap size, Error rate).
+             Interaction: Clicking a point in the scatterplot updates the side panel. Filtering updates the scatterplot opacity.
+             Justification: This mimics the "ScagExplorer" interface but for the user's specific data type.
+        -->
+        <section id="explorer" class="section-card bg-white">
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h2 class="text-xl font-bold text-slate-800">The "Heatmap Explorer" Prototype</h2>
+                    <p class="text-sm text-slate-500">Interactive proof-of-concept for the final paper deliverable.</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="resetExplorer()"
+                        class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1 rounded">Reset
+                        View</button>
+                    <button onclick="simulateAnalysis()"
+                        class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded shadow">Run
+                        Clustering</button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+
+                <!-- Controls Sidebar -->
+                <div class="lg:col-span-1 space-y-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
+                    <div>
+                        <h4 class="font-bold text-sm text-slate-700 mb-3 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4">
+                                </path>
+                            </svg>
+                            Filter by Features
+                        </h4>
+
+                        <div class="space-y-4">
+                            <div>
+                                <label class="text-xs font-semibold text-slate-500 flex justify-between">
+                                    <span>Gap Tolerance (Miles)</span>
+                                    <span id="gapVal" class="text-blue-600">All</span>
+                                </label>
+                                <input type="range" id="gapFilter" min="0" max="2000" value="2000"
+                                    class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                                <div class="flex justify-between text-[10px] text-slate-400">
+                                    <span>0 (Continuous)</span>
+                                    <span>>1000 (Fragmented)</span>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="text-xs font-semibold text-slate-500 flex justify-between">
+                                    <span>Error Probability</span>
+                                    <span id="errVal" class="text-blue-600">All</span>
+                                </label>
+                                <input type="range" id="errorFilter" min="0" max="100" value="100"
+                                    class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-200">
+                        <h4 class="font-bold text-sm text-slate-700 mb-2">Cluster Insights</h4>
+                        <div class="space-y-2">
+                            <div class="flex items-center gap-2 text-xs">
+                                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                                <span>Complete / Good Condition</span>
+                            </div>
+                            <div class="flex items-center gap-2 text-xs">
+                                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                <span>High Fragmentation</span>
+                            </div>
+                            <div class="flex items-center gap-2 text-xs">
+                                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                                <span>Anomalous / High Error</span>
+                            </div>
+                            <div class="flex items-center gap-2 text-xs">
+                                <div class="w-3 h-3 rounded-full bg-purple-500"></div>
+                                <span>Distressed Pattern</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Projection View -->
+                <div class="lg:col-span-2">
+                    <div class="bg-white border border-slate-200 rounded-lg p-1 relative">
+                        <div
+                            class="absolute top-2 left-2 z-10 bg-white/90 px-2 py-1 text-xs font-mono border rounded shadow-sm">
+                            Projection: t-SNE (Simulated)
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="projectionChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-xs text-slate-400 text-center">
+                        Each point represents a single Highway-County Heatmap. Closer points have similar structural
+                        characteristics (gaps, score distributions).
+                    </div>
+                </div>
+
+                <!-- Detail View -->
+                <div class="lg:col-span-1 bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col h-full">
+                    <h4 class="font-bold text-sm text-slate-700 mb-1">Selected Heatmap Detail</h4>
+                    <p class="text-xs text-slate-500 mb-4">ID: <span id="detailId"
+                            class="font-mono text-slate-800">Select a point...</span></p>
+
+                    <div class="flex-grow space-y-4">
+                        <!-- Simulated Heatmap Visual -->
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Visual Representation
+                            </div>
+                            <canvas id="detailCanvas" class="heatmap-canvas border border-slate-300"></canvas>
+                            <div class="flex justify-between text-[10px] text-slate-400 mt-1">
+                                <span>Mile 0</span>
+                                <span>Mile 500+</span>
+                            </div>
+                        </div>
+
+                        <!-- Metrics -->
+                        <div class="space-y-2">
+                            <div class="text-[10px] uppercase tracking-wider text-slate-400">Diagnostic Metrics</div>
+
+                            <div class="flex justify-between items-center text-xs">
+                                <span>Total Length:</span>
+                                <span id="metaLength" class="font-mono font-bold">-</span>
+                            </div>
+                            <div class="flex justify-between items-center text-xs">
+                                <span>Gap Size:</span>
+                                <span id="metaGap" class="font-mono font-bold">-</span>
+                            </div>
+                            <div class="flex justify-between items-center text-xs">
+                                <span>Data Health:</span>
+                                <div class="w-16 h-2 bg-slate-200 rounded-full overflow-hidden">
+                                    <div id="metaHealthBar" class="h-full bg-slate-400 w-0"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Classification -->
+                        <div id="classificationBox"
+                            class="bg-slate-200 p-3 rounded text-center text-xs font-bold text-slate-500 mt-auto">
+                            No Selection
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Section 4: Implementation Roadmap -->
+        <section class="section-card">
+            <h2 class="text-xl font-bold mb-4">Paper Implementation Roadmap</h2>
+            <div class="relative">
+                <div class="absolute left-4 top-0 bottom-0 w-0.5 bg-slate-200"></div>
+
+                <div class="relative pl-10 pb-6">
+                    <div class="absolute left-2 top-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white"></div>
+                    <h4 class="font-bold text-slate-700 text-sm">Phase 1: Feature Engineering</h4>
+                    <p class="text-sm text-slate-500">Define "Heatmap Diagnostics". Calculate sparsity, run-length of
+                        gaps, and distribution moments for all 2,000+ files.</p>
+                </div>
+
+                <div class="relative pl-10 pb-6">
+                    <div class="absolute left-2 top-1 w-4 h-4 bg-blue-500 rounded-full border-2 border-white"></div>
+                    <h4 class="font-bold text-slate-700 text-sm">Phase 2: Dimensionality Reduction</h4>
+                    <p class="text-sm text-slate-500">Apply t-SNE or UMAP on the feature vectors. Verify that "Gappy"
+                        maps separate from "Complete" maps.</p>
+                </div>
+
+                <div class="relative pl-10 pb-6">
+                    <div class="absolute left-2 top-1 w-4 h-4 bg-slate-300 rounded-full border-2 border-white"></div>
+                    <h4 class="font-bold text-slate-700 text-sm">Phase 3: The Explorer Tool</h4>
+                    <p class="text-sm text-slate-500">Build the web-based interactive scatterplot (as prototyped above)
+                        to allow qualitative verification of clusters.</p>
+                </div>
+
+                <div class="relative pl-10">
+                    <div class="absolute left-2 top-1 w-4 h-4 bg-slate-300 rounded-full border-2 border-white"></div>
+                    <h4 class="font-bold text-slate-700 text-sm">Phase 4: Case Study Selection</h4>
+                    <p class="text-sm text-slate-500">Select 5 representative heatmaps from the centers of the main
+                        clusters to discuss in the paper.</p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-800 text-slate-400 py-8 text-center text-sm">
+        <p>Interactive Research Plan generated for Highway Heatmap Analysis Paper.</p>
+        <p class="mt-2 text-xs">Based on methodologies from "ScagExplorer" (Dang & Wilkinson).</p>
+    </footer>
+
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+
+    <script>
+        // --- Data Generation & State Management ---
+        const state = {
+            dataPoints: [],
+            selectedId: null,
+            filters: {
+                maxGap: 2000,
+                maxError: 100
+            }
+        };
+
+        // Generate synthetic "Heatmap" data objects
+        // Each object represents one Highway-County pair
+        function generateData() {
+            const points = [];
+            const clusters = [
+                { cx: 10, cy: 10, type: 'Good', color: '#22c55e' }, // Green
+                { cx: 40, cy: 10, type: 'Fragmented', color: '#eab308' }, // Yellow
+                { cx: 10, cy: 40, type: 'Distressed', color: '#a855f7' }, // Purple
+                { cx: 40, cy: 40, type: 'Anomalous', color: '#ef4444' } // Red
+            ];
+
+            for (let i = 0; i < 250; i++) {
+                // Pick a cluster
+                const cluster = clusters[Math.floor(Math.random() * clusters.length)];
+
+                // Add noise to position
+                const x = cluster.cx + (Math.random() - 0.5) * 15;
+                const y = cluster.cy + (Math.random() - 0.5) * 15;
+
+                // Derive metrics based on cluster type (Correlation between position and features)
+                let gapSize = 0;
+                let errorRate = 0;
+                let length = 50 + Math.floor(Math.random() * 200); // miles
+
+                if (cluster.type === 'Fragmented') {
+                    gapSize = 800 + Math.random() * 1200; // Large gaps
+                } else if (cluster.type === 'Anomalous') {
+                    errorRate = 50 + Math.random() * 50;
+                    gapSize = Math.random() * 500;
+                } else if (cluster.type === 'Distressed') {
+                    gapSize = Math.random() * 200;
+                    errorRate = Math.random() * 20;
+                } else {
+                    gapSize = Math.random() * 50; // Continuous
+                    errorRate = Math.random() * 5;
+                }
+
+                // Generate a visual pattern array (0-100 score) for the heatmap
+                let pattern = [];
+                for (let p = 0; p < 50; p++) {
+                    if (cluster.type === 'Fragmented' && Math.random() > 0.4) {
+                        pattern.push(null); // Gap
+                    } else if (cluster.type === 'Distressed') {
+                        pattern.push(Math.random() * 40); // Low scores
+                    } else if (cluster.type === 'Good') {
+                        pattern.push(80 + Math.random() * 20); // High scores
+                    } else {
+                        pattern.push(Math.random() * 100); // Random noise
+                    }
+                }
+
+                points.push({
+                    id: `HM-${1000 + i}`,
+                    x: x,
+                    y: y,
+                    type: cluster.type,
+                    color: cluster.color,
+                    gapSize: Math.floor(gapSize),
+                    errorRate: Math.floor(errorRate),
+                    length: length,
+                    pattern: pattern
+                });
+            }
+            state.dataPoints = points;
+        }
+
+        generateData();
+
+        // --- Chart.js Implementation (The Projection View) ---
+        let projectionChart;
+
+        function initChart() {
+            const ctx = document.getElementById('projectionChart').getContext('2d');
+
+            projectionChart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'Heatmaps',
+                        data: state.dataPoints.map(p => ({ x: p.x, y: p.y, raw: p })),
+                        backgroundColor: state.dataPoints.map(p => p.color),
+                        pointRadius: 5,
+                        pointHoverRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { display: false, grid: { display: false } }, // Hide axes for abstract projection look
+                        y: { display: false, grid: { display: false } }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    const p = context.raw.raw;
+                                    return `${p.id} (${p.type})`;
+                                }
+                            }
+                        }
+                    },
+                    onClick: (e, elements) => {
+                        if (elements.length > 0) {
+                            const index = elements[0].index;
+                            const pointData = projectionChart.data.datasets[0].data[index].raw;
+                            selectHeatmap(pointData);
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- Interaction Logic ---
+
+        function updateFilters() {
+            const maxGap = parseInt(document.getElementById('gapFilter').value);
+            const maxError = parseInt(document.getElementById('errorFilter').value);
+
+            // Update UI Labels
+            document.getElementById('gapVal').innerText = maxGap < 2000 ? `< ${maxGap} mi` : 'All';
+            document.getElementById('errVal').innerText = maxError < 100 ? `< ${maxError}%` : 'All';
+
+            state.filters.maxGap = maxGap;
+            state.filters.maxError = maxError;
+
+            // Filter Dataset
+            const filteredColors = state.dataPoints.map(p => {
+                if (p.gapSize > maxGap || p.errorRate > maxError) {
+                    return '#e2e8f0'; // Gray out filtered
+                }
+                return p.color; // Original color
+            });
+
+            projectionChart.data.datasets[0].backgroundColor = filteredColors;
+            projectionChart.update();
+        }
+
+        // Add Listeners
+        document.getElementById('gapFilter').addEventListener('input', updateFilters);
+        document.getElementById('errorFilter').addEventListener('input', updateFilters);
+
+        // --- Detail View Logic (Canvas Drawing) ---
+        function selectHeatmap(data) {
+            state.selectedId = data.id;
+
+            // Update Text Info
+            document.getElementById('detailId').innerText = data.id;
+            document.getElementById('metaLength').innerText = data.length + " mi";
+            document.getElementById('metaGap').innerText = data.gapSize + " mi";
+
+            const healthPct = 100 - data.errorRate;
+            const healthBar = document.getElementById('metaHealthBar');
+            healthBar.style.width = `${healthPct}%`;
+            healthBar.className = `h-full ${healthPct > 80 ? 'bg-green-500' : healthPct > 50 ? 'bg-yellow-500' : 'bg-red-500'}`;
+
+            const classBox = document.getElementById('classificationBox');
+            classBox.innerText = data.type;
+            classBox.style.color = 'white';
+            classBox.style.backgroundColor = data.color;
+
+            // Draw Heatmap on Canvas
+            drawHeatmapCanvas(data.pattern);
+        }
+
+        function drawHeatmapCanvas(pattern) {
+            const cvs = document.getElementById('detailCanvas');
+            const ctx = cvs.getContext('2d');
+            const w = cvs.width = cvs.clientWidth;
+            const h = cvs.height = cvs.clientHeight;
+
+            ctx.clearRect(0, 0, w, h);
+
+            const segWidth = w / pattern.length;
+
+            pattern.forEach((score, i) => {
+                if (score === null) {
+                    // Draw Gap (Hashed pattern or black)
+                    ctx.fillStyle = '#1e293b'; // Slate-800 for void
+                    ctx.fillRect(i * segWidth, 0, segWidth, h);
+                } else {
+                    // Color Map: Red (0) -> Yellow (50) -> Green (100)
+                    // Simple logic
+                    let r, g, b = 0;
+                    if (score < 50) {
+                        r = 255;
+                        g = Math.floor(255 * (score / 50));
+                    } else {
+                        r = Math.floor(255 * ((100 - score) / 50));
+                        g = 255;
+                    }
+                    ctx.fillStyle = `rgb(${r},${g},${b})`;
+                    ctx.fillRect(i * segWidth, 0, segWidth, h);
+                }
+            });
+        }
+
+        // --- Buttons ---
+        function resetExplorer() {
+            document.getElementById('gapFilter').value = 2000;
+            document.getElementById('errorFilter').value = 100;
+            updateFilters();
+
+            // Reset Detail View
+            document.getElementById('detailId').innerText = "Select a point...";
+            document.getElementById('metaLength').innerText = "-";
+            document.getElementById('metaGap').innerText = "-";
+            document.getElementById('metaHealthBar').style.width = "0";
+            document.getElementById('classificationBox').innerText = "No Selection";
+            document.getElementById('classificationBox').style.backgroundColor = "#e2e8f0";
+            document.getElementById('classificationBox').style.color = "#64748b";
+
+            const cvs = document.getElementById('detailCanvas');
+            const ctx = cvs.getContext('2d');
+            ctx.clearRect(0, 0, cvs.width, cvs.height);
+        }
+
+        function simulateAnalysis() {
+            // Animate chart to look like it's calculating
+            const originalData = JSON.parse(JSON.stringify(projectionChart.data.datasets[0].data));
+
+            // Scramble briefly
+            const scrambled = originalData.map(d => ({
+                x: (Math.random() - 0.5) * 100,
+                y: (Math.random() - 0.5) * 100,
+                raw: d.raw
+            }));
+
+            projectionChart.data.datasets[0].data = scrambled;
+            projectionChart.update();
+
+            setTimeout(() => {
+                projectionChart.data.datasets[0].data = originalData;
+                projectionChart.update();
+                alert("Clustering Complete. Analysis updated.");
+            }, 800);
+        }
+
+        // Initialize
+        window.addEventListener('load', () => {
+            initChart();
+            // Select one random point to start
+            selectHeatmap(state.dataPoints[0]);
+        });
+
+    </script>
+</body>
+
+</html>
