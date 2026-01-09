@@ -44,6 +44,7 @@ interface MiniSegmentChartProps {
   metric: string
   getCategory: (scoreType: string, score: number) => string
   getCategoryColor: (category: string, scoreType: string) => string
+  maxScore?: number
 }
 
 const fieldToScoreType: Record<string, string> = {
@@ -96,13 +97,14 @@ const MiniSegmentChart: React.FC<MiniSegmentChartProps> = ({
   metric,
   getCategory,
   getCategoryColor,
+  maxScore,
 }) => {
   const svgRef = React.useRef<SVGSVGElement>(null)
 
   const years = useMemo(() => {
-    // Always use all years from 1996 to 2022 for consistent vertical spacing
+    // Always use all years from 1996 to 2024 for consistent vertical spacing
     const allYears: number[] = []
-    for (let year = 2022; year >= 1996; year--) {
+    for (let year = 2024; year >= 1996; year--) {
       allYears.push(year)
     }
     return allYears
@@ -117,7 +119,12 @@ const MiniSegmentChart: React.FC<MiniSegmentChartProps> = ({
       const rawScore = f.properties[metric]
       const score = Number(rawScore)
       const year = Number(f.properties.EFF_YEAR) || 0
+
       if (!isFinite(begin) || !isFinite(end) || end <= begin) continue
+
+      // Filter by maxScore if provided: exclude scores that are 0 or greater than maxScore
+      if (maxScore !== undefined && (score <= 0 || score > maxScore)) continue
+
       segs.push({ begin, end, score, year })
     }
 
@@ -169,7 +176,7 @@ const MiniSegmentChart: React.FC<MiniSegmentChartProps> = ({
     for (const [, arr] of byYear) arr.sort((a, b) => a.begin - b.begin)
 
     return { segmentsByYear: byYear, bigGaps: gaps, minPos, maxPos }
-  }, [data, metric])
+  }, [data, metric, maxScore])
 
   // X compression + spacers
   const compressFns = useMemo(() => {

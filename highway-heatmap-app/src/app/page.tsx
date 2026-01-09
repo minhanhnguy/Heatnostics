@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useState, useCallback, useRef, useMemo } from "react"
+import { useEffect, useState, useCallback, useRef, useMemo, startTransition } from "react"
 import { useResizeDetector } from "react-resize-detector"
 import { routePublic } from "@/config"
 import TableModalPMIS from "@/components/TableModalPMIS"
@@ -31,6 +31,21 @@ const fieldToScoreType = {
   TX_RIDE_SCORE: "ride",
   TX_AADT_CURRENT: "aadt",
   TX_MAINTENANCE_COST_AMT: "cost",
+  // Geometric fields use "condition" type since they're related to condition score visualization
+  GEOMETRIC_MST: "condition",
+  GEOMETRIC_ALPHA_SHAPE: "condition",
+  GEOMETRIC_CONVEX_HULL: "condition",
+  // Scagnostics fields
+  SCAG_RADAR: "scagnostics",
+  SCAG_OUTLYING: "scagnostics",
+  SCAG_SKEWED: "scagnostics",
+  SCAG_STRINGY: "scagnostics",
+  SCAG_SPARSE: "scagnostics",
+  SCAG_CONVEX: "scagnostics",
+  SCAG_CLUMPY: "scagnostics",
+  SCAG_SKINNY: "scagnostics",
+  SCAG_STRIATED: "scagnostics",
+  SCAG_MONOTONIC: "scagnostics",
 }
 
 // Add this interface at the top of the file after the existing interfaces
@@ -38,7 +53,28 @@ interface ChartData {
   highway: string
   county: string
   field: string
+  maxScore?: number
 }
+const STEP1_CUSTOM_FIELDS = [
+  'TX_CONDITION_SCORE',      // Column 1: Condition (filtered)
+  'GEOMETRIC_MST',           // Column 2: MST
+  'GEOMETRIC_ALPHA_SHAPE',   // Column 3: Alpha Shape  
+  'GEOMETRIC_CONVEX_HULL'    // Column 4: Convex Hull
+]
+
+// Step 2: Scagnostics fields
+const STEP2_SCAGNOSTICS_FIELDS = [
+  'SCAG_RADAR',              // Radar chart glyph
+  'SCAG_OUTLYING',           // Individual metrics
+  'SCAG_SKEWED',
+  'SCAG_STRINGY',
+  'SCAG_SPARSE',
+  'SCAG_CONVEX',
+  'SCAG_CLUMPY',
+  'SCAG_SKINNY',
+  'SCAG_STRIATED',
+  'SCAG_MONOTONIC'
+]
 
 const EXP3: React.FC = () => {
   // ─── Mobile detection ──────────────────────────────────────────
@@ -54,12 +90,23 @@ const EXP3: React.FC = () => {
   const [scoreGauges, setScoreGauges] = useState<{ [k in "condition" | "distress" | "ride" | "aadt" | "cost"]?: number }>({})
   const [mapModalInfo, setMapModalInfo] = useState<{ highway: string; location: string; locationType: 'county' | 'district' } | null>(null)
   const [activeHeatMapData, setActiveHeatMapData] = useState<
-    { highway: string; county: string; scores: { value: string; label: string }[]; id: string }[]
+    { highway: string; county: string; scores: { value: string; label: string }[]; id: string; maxScore?: number }[]
   >([])
 
   // Add search state management with debouncing
   const [tableSearch, setTableSearch] = useState("")
   const [debouncedTableSearch, setDebouncedTableSearch] = useState("")
+
+  // Step 1: Geometric Graphs State
+  const [activeTab, setActiveTab] = useState<'pmis' | 'step1' | 'step2'>('pmis')
+  const [geometricSearch, setGeometricSearch] = useState("")
+  const [debouncedGeometricSearch, setDebouncedGeometricSearch] = useState("")
+  const [geometricViewType, setGeometricViewType] = useState<'county' | 'district'>('county')
+
+  // Step 2: Scagnostics State
+  const [scagSearch, setScagSearch] = useState("")
+  const [debouncedScagSearch, setDebouncedScagSearch] = useState("")
+  const [scagViewType, setScagViewType] = useState<'county' | 'district'>('county')
 
   // Mobile-specific state
   const [viewType, setViewType] = useState<'county' | 'district'>('county')
@@ -77,6 +124,17 @@ const EXP3: React.FC = () => {
     const timer = setTimeout(() => setDebouncedTableSearch(tableSearch), 150)
     return () => clearTimeout(timer)
   }, [tableSearch])
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedGeometricSearch(geometricSearch), 150)
+    return () => clearTimeout(timer)
+  }, [geometricSearch])
+
+  // Debounce for Step 2 search
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedScagSearch(scagSearch), 150)
+    return () => clearTimeout(timer)
+  }, [scagSearch])
 
   // Track if all modals were recently closed
   const [recentlyCleared, setRecentlyCleared] = useState(false)
@@ -198,6 +256,19 @@ const EXP3: React.FC = () => {
         case "TX_CONDITION_SCORE": scoreLabel = "Condition Score"; break
         case "TX_DISTRESS_SCORE": scoreLabel = "Distress Score"; break
         case "TX_RIDE_SCORE": scoreLabel = "Ride Score"; break
+        case "GEOMETRIC_MST": scoreLabel = "MST"; break
+        case "GEOMETRIC_ALPHA_SHAPE": scoreLabel = "Alpha Shape"; break
+        case "GEOMETRIC_CONVEX_HULL": scoreLabel = "Convex Hull"; break
+        case "SCAG_RADAR": scoreLabel = "Scagnostics"; break
+        case "SCAG_OUTLYING": scoreLabel = "Outlying"; break
+        case "SCAG_SKEWED": scoreLabel = "Skewed"; break
+        case "SCAG_STRINGY": scoreLabel = "Stringy"; break
+        case "SCAG_SPARSE": scoreLabel = "Sparse"; break
+        case "SCAG_CONVEX": scoreLabel = "Convex"; break
+        case "SCAG_CLUMPY": scoreLabel = "Clumpy"; break
+        case "SCAG_SKINNY": scoreLabel = "Skinny"; break
+        case "SCAG_STRIATED": scoreLabel = "Striated"; break
+        case "SCAG_MONOTONIC": scoreLabel = "Monotonic"; break
         default:
           scoreLabel = chart.field.replace("TX_", "").split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")
       }
@@ -206,7 +277,7 @@ const EXP3: React.FC = () => {
 
       if (recentlyCleared) {
         const newHeatmapId = getNextHeatmapId()
-        setActiveHeatMapData([{ highway: chart.highway, county: chart.county, scores: [newScore], id: newHeatmapId }])
+        setActiveHeatMapData([{ highway: chart.highway, county: chart.county, scores: [newScore], id: newHeatmapId, maxScore: chart.maxScore }])
         return
       }
 
@@ -225,7 +296,7 @@ const EXP3: React.FC = () => {
         })
       } else {
         setActiveHeatMapData((prev) => [
-          ...prev, { highway: chart.highway, county: chart.county, scores: [newScore], id: getNextHeatmapId() },
+          ...prev, { highway: chart.highway, county: chart.county, scores: [newScore], id: getNextHeatmapId(), maxScore: chart.maxScore },
         ])
       }
     },
@@ -234,8 +305,11 @@ const EXP3: React.FC = () => {
 
   const handleAddChart = useCallback(
     (chart: ChartData, scoreValue: number) => {
-      addChart(chart, scoreValue)
-      addOrUpdateHeatMapData(chart)
+      // Use startTransition to defer state updates, avoiding React render conflicts
+      startTransition(() => {
+        addChart(chart, scoreValue)
+        addOrUpdateHeatMapData(chart)
+      })
     },
     [addChart, addOrUpdateHeatMapData],
   )
@@ -343,26 +417,7 @@ const EXP3: React.FC = () => {
     if (Array.isArray(data) && data.length > 0) setIsTableLoaded(true)
   }, [])
 
-  const tableModalComponent = useMemo(() => (
-    <TableModalPMIS
-      title="PMIS Data"
-      containerDimensions={containerDimensions}
-      setSelectedHighway={setSelectedHighway}
-      addChart={handleAddChart}
-      activeHeatMapData={activeHeatMapData}
-      showMapModal={showMapModal}
-      mapModalOpen={mapModalOpen}
-      mapModalInfo={mapModalInfo}
-      search={debouncedTableSearch}
-      setSearch={setTableSearch}
-      features={pmisFeatures}
-      viewType={viewType}
-      setViewType={setViewType}
-      onDataProcessed={handleTableDataProcessed}
-      onSegmentDataReady={setSegmentDataByHighwayCounty}
-      onAvailableHighwaysReady={setAvailableHighways}
-    />
-  ), [containerDimensions, handleAddChart, activeHeatMapData, showMapModal, mapModalOpen, mapModalInfo, debouncedTableSearch, pmisFeatures, viewType, handleTableDataProcessed])
+
 
   // ─── Layout ────────────────────────────────────────────────────────────
   // Use the same TableModalPMIS for both mobile and desktop - it's now responsive
@@ -370,7 +425,26 @@ const EXP3: React.FC = () => {
     const mobileLoading = !(isPmisLoaded && isTableLoaded)
     return (
       <div className="flex flex-col h-screen overflow-hidden">
-        {!mobileLoading && tableModalComponent}
+        {!mobileLoading && (
+          <TableModalPMIS
+            title="PMIS Data"
+            containerDimensions={containerDimensions}
+            setSelectedHighway={setSelectedHighway}
+            addChart={handleAddChart}
+            activeHeatMapData={activeHeatMapData}
+            showMapModal={showMapModal}
+            mapModalOpen={mapModalOpen}
+            mapModalInfo={mapModalInfo}
+            search={debouncedTableSearch}
+            setSearch={setTableSearch}
+            features={pmisFeatures}
+            viewType={viewType}
+            setViewType={setViewType}
+            onDataProcessed={handleTableDataProcessed}
+            onSegmentDataReady={setSegmentDataByHighwayCounty}
+            onAvailableHighwaysReady={setAvailableHighways}
+          />
+        )}
 
         {/* Map Modal */}
         {mapModalOpen && mapModalInfo && (
@@ -602,7 +676,169 @@ const EXP3: React.FC = () => {
               </div>
             </div>
           )}
-          {tableModalComponent}
+          {/* PMIS Data Tab Content */}
+          <div className={activeTab === 'pmis' ? 'block h-full' : 'hidden h-full'} style={{ display: activeTab === 'pmis' ? 'block' : 'none' }}>
+            {/* We clone tableModalComponent to add headerContent prop since it's memoized */}
+            <TableModalPMIS
+              title="PMIS Data"
+              containerDimensions={containerDimensions}
+              setSelectedHighway={setSelectedHighway}
+              addChart={handleAddChart}
+              activeHeatMapData={activeHeatMapData}
+              showMapModal={showMapModal}
+              mapModalOpen={mapModalOpen}
+              mapModalInfo={mapModalInfo}
+              search={debouncedTableSearch}
+              setSearch={setTableSearch}
+              features={pmisFeatures}
+              viewType={viewType}
+              setViewType={setViewType}
+              onDataProcessed={handleTableDataProcessed}
+              onSegmentDataReady={setSegmentDataByHighwayCounty}
+              onAvailableHighwaysReady={setAvailableHighways}
+              headerContent={
+                <div className="flex gap-2">
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'pmis'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('pmis')}
+                  >
+                    PMIS Data
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step1'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('step1')}
+                  >
+                    Step 1: Geometric Graphs
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step2'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('step2')}
+                  >
+                    Step 2: Scagnostics
+                  </button>
+                </div>
+              }
+            />
+          </div>
+
+          {/* Step 1 Tab Content */}
+          <div className={activeTab === 'step1' ? 'block h-full' : 'hidden h-full'} style={{ display: activeTab === 'step1' ? 'block' : 'none' }}>
+            <TableModalPMIS
+              title="Step 1: Geometric Graphs"
+              containerDimensions={containerDimensions}
+              setSelectedHighway={setSelectedHighway}
+              addChart={handleAddChart}
+              activeHeatMapData={activeHeatMapData}
+              showMapModal={showMapModal}
+              mapModalOpen={mapModalOpen}
+              mapModalInfo={mapModalInfo}
+              search={debouncedGeometricSearch}
+              setSearch={setGeometricSearch}
+              features={pmisFeatures}
+              viewType={geometricViewType}
+              setViewType={setGeometricViewType}
+              onDataProcessed={undefined}
+              onSegmentDataReady={undefined}
+              onAvailableHighwaysReady={undefined}
+              customFields={STEP1_CUSTOM_FIELDS}
+              maxConditionScore={49}
+              headerContent={
+                <div className="flex gap-2">
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'pmis'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('pmis')}
+                  >
+                    PMIS Data
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step1'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('step1')}
+                  >
+                    Step 1: Geometric Graphs
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step2'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('step2')}
+                  >
+                    Step 2: Scagnostics
+                  </button>
+                </div>
+              }
+            />
+          </div>
+
+          {/* Step 2 Tab Content - Scagnostics */}
+          <div className={activeTab === 'step2' ? 'block h-full' : 'hidden h-full'} style={{ display: activeTab === 'step2' ? 'block' : 'none' }}>
+            <TableModalPMIS
+              title="Step 2: Scagnostics"
+              containerDimensions={containerDimensions}
+              setSelectedHighway={setSelectedHighway}
+              addChart={handleAddChart}
+              activeHeatMapData={activeHeatMapData}
+              showMapModal={showMapModal}
+              mapModalOpen={mapModalOpen}
+              mapModalInfo={mapModalInfo}
+              search={debouncedScagSearch}
+              setSearch={setScagSearch}
+              features={pmisFeatures}
+              viewType={scagViewType}
+              setViewType={setScagViewType}
+              onDataProcessed={undefined}
+              onSegmentDataReady={undefined}
+              onAvailableHighwaysReady={undefined}
+              customFields={STEP2_SCAGNOSTICS_FIELDS}
+              maxConditionScore={49}
+              headerContent={
+                <div className="flex gap-2">
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'pmis'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('pmis')}
+                  >
+                    PMIS Data
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step1'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('step1')}
+                  >
+                    Step 1: Geometric Graphs
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step2'
+                      ? 'bg-white text-blue-900 shadow-sm'
+                      : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    onClick={() => setActiveTab('step2')}
+                  >
+                    Step 2: Scagnostics
+                  </button>
+                </div>
+              }
+            />
+          </div>
         </div>
         {hasScores && (
           <div className="relative flex flex-col min-h-0 overflow-hidden rounded-lg shadow-md border border-gray-200 bg-white">
@@ -651,6 +887,7 @@ const EXP3: React.FC = () => {
                     county={data.county}
                     selectedScores={data.scores}
                     features={pmisFeatures}
+                    maxScore={data.maxScore}
                     onClose={() =>
                       setActiveHeatMapData((prev) =>
                         prev.filter((item) => item.id !== data.id),
@@ -678,7 +915,6 @@ const EXP3: React.FC = () => {
             </div>
           </div>
         )}
-
       </div>
       {/* Map Modal */}
       {mapModalOpen && mapModalInfo && (

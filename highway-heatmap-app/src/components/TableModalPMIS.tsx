@@ -6,6 +6,9 @@ import { routePublic } from "@/config"
 import { FaSearch, FaSpinner, FaChartLine, FaMapMarkerAlt, FaSort, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight } from "react-icons/fa"
 import Papa from "papaparse"
 import MiniSegmentChart, { type PMISFeature } from "@/components/chart/MiniSegmentChart"
+import MiniGeometricChart from "@/components/chart/MiniGeometricChart"
+import MiniRadarChart from "@/components/chart/MiniRadarChart"
+import { isGeometricField, getGeometryType, getGeometryLabel, computeScagnostics, extractDamagePoints, normalizePoints, type ScagnosticsResult } from "@/lib/geometricUtils"
 
 import { useIsMobile } from "@/hooks/useIsMobile"
 import Card from "@/components/mobile/Card"
@@ -182,6 +185,25 @@ function bridgeGapsForSegments(segments: PMISFeature[]): PMISFeature[] {
   return bridged
 }
 
+// Helper to check if a field is a Scagnostics field
+const isScagnosticsField = (field: string): boolean => field.startsWith('SCAG_')
+
+// Get the scagnostics key from field name
+const getScagKey = (field: string): keyof ScagnosticsResult | null => {
+  const map: Record<string, keyof ScagnosticsResult> = {
+    'SCAG_OUTLYING': 'outlying',
+    'SCAG_SKEWED': 'skewed',
+    'SCAG_STRINGY': 'stringy',
+    'SCAG_SPARSE': 'sparse',
+    'SCAG_CONVEX': 'convex',
+    'SCAG_CLUMPY': 'clumpy',
+    'SCAG_SKINNY': 'skinny',
+    'SCAG_STRIATED': 'striated',
+    'SCAG_MONOTONIC': 'monotonic'
+  }
+  return map[field] || null
+}
+
 // This new component will defer rendering of the MiniSegmentChart
 const DeferredChartCell: React.FC<{
   segmentData: PMISFeature[]
@@ -190,8 +212,18 @@ const DeferredChartCell: React.FC<{
   getCategoryColor: (category: string, scoreType: string) => string
   color: string
   index: number
-}> = ({ segmentData, metric, getCategory, getCategoryColor, color, index }) => {
+  maxScore?: number
+}> = ({ segmentData, metric, getCategory, getCategoryColor, color, index, maxScore }) => {
   const [isReady, setIsReady] = useState(false)
+
+  // Memoize scagnostics computation
+  const scagnostics = useMemo(() => {
+    if (!isScagnosticsField(metric) || segmentData.length === 0) return null
+    const damagePoints = extractDamagePoints(segmentData, maxScore || 49)
+    if (damagePoints.length < 5) return null
+    const normalizedPoints = normalizePoints(damagePoints)
+    return computeScagnostics(normalizedPoints)
+  }, [segmentData, metric, maxScore])
 
   useEffect(() => {
     // Stagger rendering to prevent blocking the main thread.
@@ -204,12 +236,70 @@ const DeferredChartCell: React.FC<{
     return <FaSpinner className="animate-spin mx-auto" size={16} style={{ color }} />
   }
 
+  // Check if this is a Scagnostics field
+  if (isScagnosticsField(metric)) {
+    if (!scagnostics) {
+      return (
+        <div className="w-full h-full bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+          {"< 5 pts"}
+        </div>
+      )
+    }
+
+    // SCAG_RADAR shows the mini radar chart
+    if (metric === 'SCAG_RADAR') {
+      return (
+        <div className="w-full h-full flex items-center justify-center">
+          <MiniRadarChart
+            values={scagnostics}
+            size={120}
+            color="#3B82F6"
+          />
+        </div>
+      )
+    }
+
+    // Individual metric - show percentage value with color coding
+    const scagKey = getScagKey(metric)
+    if (scagKey) {
+      const value = scagnostics[scagKey]
+      const percentage = Math.round(value * 100)
+      // Color based on value: low=green, mid=yellow, high=red
+      const bgColor = value < 0.3 ? '#dcfce7' : value < 0.7 ? '#fef9c3' : '#fee2e2'
+      const textColor = value < 0.3 ? '#166534' : value < 0.7 ? '#854d0e' : '#991b1b'
+
+      return (
+        <div
+          className="w-full h-full flex items-center justify-center text-sm font-medium"
+          style={{ backgroundColor: bgColor, color: textColor }}
+        >
+          {percentage}%
+        </div>
+      )
+    }
+  }
+
+  // Check if this is a geometric field
+  if (isGeometricField(metric)) {
+    const geometryType = getGeometryType(metric)
+    if (geometryType) {
+      return (
+        <MiniGeometricChart
+          data={segmentData}
+          geometryType={geometryType}
+          maxScore={maxScore || 49}
+        />
+      )
+    }
+  }
+
   return (
     <MiniSegmentChart
       data={segmentData}
       metric={metric}
       getCategory={getCategory}
       getCategoryColor={getCategoryColor}
+      maxScore={maxScore}
     />
   )
 }
@@ -255,6 +345,9 @@ interface TableModalPMISProps {
   onDataProcessed?: (data: ProcessedFeature[]) => void
   onSegmentDataReady?: (data: Map<string, PMISFeature[]>) => void
   onAvailableHighwaysReady?: (highways: Set<string>) => void
+  headerContent?: React.ReactNode
+  customFields?: string[]
+  maxConditionScore?: number
 }
 
 type SortDirection = "asc" | "desc" | null
@@ -281,10 +374,11 @@ interface TableRowProps {
   rankingHasScore?: boolean
   rankingActive: boolean
   azMode: boolean
+  maxConditionScore?: number
 }
 
 const TableRow: React.FC<TableRowProps> = React.memo(
-  ({ item, fields, isHighwayAvailable, handleMapClick, handleChartClick, activeHeatMapData, getScoreCategory, getCategoryColor, segmentData, rowIndex, clickedMapKey, rankingScore, rankingHasScore, rankingActive, azMode }) => {
+  ({ item, fields, isHighwayAvailable, handleMapClick, handleChartClick, activeHeatMapData, getScoreCategory, getCategoryColor, segmentData, rowIndex, clickedMapKey, rankingScore, rankingHasScore, rankingActive, azMode, maxConditionScore }) => {
     const isMapClicked = clickedMapKey === `${item.highway}|${item.formattedCounty}`
     return (
       <tr className="hover:bg-blue-50 border-b border-gray-200">
@@ -302,42 +396,28 @@ const TableRow: React.FC<TableRowProps> = React.memo(
           </div>
         </td>
 
-        {/* Map Button */}
-        <td className={`p-1 border-r border-gray-300 text-center ${isMapClicked ? 'bg-blue-50' : ''}`}>
-          <div className="w-full h-[56px] md:h-[100px] flex items-center justify-center">
-            <button
-              onClick={() => handleMapClick(item.highway, item.county)}
-              className={`rounded-full transition border inline-flex items-center justify-center ${isHighwayAvailable(item.highway)
-                ? isMapClicked
-                  ? "bg-blue-200 border-blue-600 ring-2 ring-blue-600 px-1.5 py-1.5"
-                  : "bg-blue-100 hover:bg-blue-200 border-transparent p-1"
-                : "bg-gray-100 cursor-not-allowed opacity-50 border-gray-200"
-                }`}
-              disabled={!isHighwayAvailable(item.highway)}
-              title={isHighwayAvailable(item.highway) ? "View on map" : "Highway not available on map"}
-              aria-pressed={isMapClicked}
-            >
-              <FaMapMarkerAlt className={isHighwayAvailable(item.highway) ? (isMapClicked ? "text-blue-800" : "text-blue-600") : "text-gray-400"} size={isMapClicked ? 10 : 8} />
-            </button>
-          </div>
-        </td>
+
 
         {/* Chart Columns */}
-        {fields.map((field, fieldIndex) => {
+        {fields.map((field: string, fieldIndex) => {
           const scoreData = item.scores[field]
           const isActive = activeHeatMapData.some(
             (d) => d.highway === item.highway && d.county === item.formattedCounty && d.scores.some((s) => s.value === field),
           )
-          const hasData = scoreData && scoreData.category !== "No Data"
-          const cellIndex = rowIndex * fields.length + fieldIndex
+          // For geometric and scagnostics fields, hasData is true if there's segment data
+          // For score fields, hasData requires valid score data
+          const isGeometric = isGeometricField(field)
+          const isScag = isScagnosticsField(field)
+          const hasData = (isGeometric || isScag) ? segmentData.length > 0 : (scoreData && scoreData.category !== "No Data")
+          const cellIndex = fieldIndex + 2 // Offset for Map and Highway/Loc columns
 
           return (
-            <td key={field} className="p-0 text-center relative border-r border-gray-300">
+            <td key={`${field}-${fieldIndex}`} className="p-0 border-r border-gray-300 relative" style={{ width: field === 'SCAG_RADAR' ? "120px" : isScag ? "50px" : "120px" }}>
               <div className="w-full h-[56px] md:h-[100px]">
                 <button
                   onClick={() => (hasData ? handleChartClick(item.highway, item.formattedCounty, field) : undefined)}
                   className="w-full h-full relative flex items-stretch justify-center"
-                  title={hasData ? `${scoreData?.category || "N/A"}: ${scoreData?.value || "N/A"}` : "No data available"}
+                  title={isGeometric ? getGeometryLabel(field) : (hasData ? `${scoreData?.category || "N/A"}: ${scoreData?.value || "N/A"}` : "No data available")}
                   disabled={!hasData}
                 >
                   {isActive && (
@@ -349,8 +429,9 @@ const TableRow: React.FC<TableRowProps> = React.memo(
                       metric={field}
                       getCategory={getScoreCategory}
                       getCategoryColor={getCategoryColor}
-                      color={scoreData.color}
+                      color={isGeometric ? '#374151' : (scoreData?.color || '#ccc')}
                       index={cellIndex}
+                      maxScore={maxConditionScore}
                     />
                   ) : (
                     <div className="w-full h-full bg-gray-100 flex items-center justify-center text-xs text-gray-400">
@@ -388,6 +469,7 @@ interface TableBodyProps {
   scoreLookup: Map<string, { score: number; hasScore: boolean }>
   rankingActive: boolean
   azMode: boolean
+  maxConditionScore?: number
 }
 
 const TableBodyComponent: React.FC<TableBodyProps> = React.memo(
@@ -405,6 +487,7 @@ const TableBodyComponent: React.FC<TableBodyProps> = React.memo(
     scoreLookup,
     rankingActive,
     azMode,
+    maxConditionScore,
   }) => {
     return (
       <tbody>
@@ -431,6 +514,7 @@ const TableBodyComponent: React.FC<TableBodyProps> = React.memo(
               rankingHasScore={rankingHasScore}
               rankingActive={rankingActive}
               azMode={azMode}
+              maxConditionScore={maxConditionScore}
             />
           )
         })}
@@ -458,6 +542,9 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
   onDataProcessed,
   onSegmentDataReady,
   onAvailableHighwaysReady,
+  headerContent,
+  customFields,
+  maxConditionScore,
 }) => {
   const [loading, setLoading] = useState(true)
   const [availableHighways, setAvailableHighways] = useState<Set<string>>(new Set())
@@ -498,8 +585,8 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
   }
 
   const fields = useMemo(
-    () => ["TX_CONDITION_SCORE", "TX_DISTRESS_SCORE", "TX_RIDE_SCORE", "TX_AADT_CURRENT", "TX_MAINTENANCE_COST_AMT"],
-    [],
+    () => customFields || ["TX_CONDITION_SCORE", "TX_DISTRESS_SCORE", "TX_RIDE_SCORE", "TX_AADT_CURRENT", "TX_MAINTENANCE_COST_AMT"],
+    [customFields],
   )
 
   // Format county name
@@ -794,8 +881,11 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
   const handleChartClick = useCallback((highway: string, county: string, field: string) => {
     const feature = processedDataWithMetrics.find((f) => f.highway === highway && f.formattedCounty === county)
     const scoreValue = feature?.scores[field]?.value || 0
-    addChart({ highway, county, field }, scoreValue)
-  }, [processedDataWithMetrics, addChart])
+    // Pass maxScore for TX_CONDITION_SCORE and geometric fields
+    const needsMaxScore = field === 'TX_CONDITION_SCORE' || isGeometricField(field)
+    // Call addChart directly - parent uses startTransition to defer state updates
+    addChart({ highway, county, field, maxScore: needsMaxScore ? maxConditionScore : undefined } as any, scoreValue)
+  }, [processedDataWithMetrics, addChart, maxConditionScore])
 
   // Build synthetic features for ranking
   const syntheticFeatures: FeatureLike[] = useMemo(() => {
@@ -1093,7 +1183,7 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
 
   // Get the current metric field for mobile view (default to condition)
   const [currentMetricIndex, setCurrentMetricIndex] = useState(0)
-  const mobileMetrics = fields.map((field) => {
+  const mobileMetrics = fields.map((field: string) => {
     const labels: Record<string, string> = {
       TX_CONDITION_SCORE: "Condition Score",
       TX_DISTRESS_SCORE: "Distress Score",
@@ -1135,8 +1225,9 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
           </div>
         </div>
       ) : (
-        <div className="px-5 py-3 bg-gradient-to-r from-[rgb(20,55,90)] to-[rgb(30,65,100)] text-white font-bold flex-shrink-0">
-          {title}
+        <div className="px-5 py-3 bg-gradient-to-r from-[rgb(20,55,90)] to-[rgb(30,65,100)] text-white font-bold flex-shrink-0 flex items-center justify-between">
+          <span>{title}</span>
+          {headerContent && <div className="flex items-center">{headerContent}</div>}
         </div>
       )}
 
@@ -1428,66 +1519,53 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
                             {viewType === "district" ? "District" : "County"} {getSortIcon("county")}
                           </div>
                         </th>
-                        <th className="p-1 text-center border-r border-gray-300" style={{ width: "40px" }}>
-                          <div className="text-xs text-gray-900">Map</div>
-                        </th>
-                        <th
-                          className={`p-2 text-center ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
-                            } border-r border-gray-300`}
-                          style={{ width: "120px" }}
-                          onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("condition")}
-                        >
-                          <div className="flex items-center justify-center gap-1 text-xs text-gray-900">
-                            Condition {getSortIcon("condition")}
-                          </div>
-                        </th>
-                        <th
-                          className={`p-2 text-center ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
-                            } border-r border-gray-300`}
-                          style={{ width: "120px" }}
-                          onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("distress")}
-                        >
-                          <div className="flex items-center justify-center gap-1 text-xs text-gray-900">
-                            Distress {getSortIcon("distress")}
-                          </div>
-                        </th>
-                        <th
-                          className={`p-2 text-center ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
-                            } border-r border-gray-300`}
-                          style={{ width: "120px" }}
-                          onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("ride")}
-                        >
-                          <div className="flex items-center justify-center gap-1 text-xs text-gray-900">
-                            Ride {getSortIcon("ride")}
-                          </div>
-                        </th>
-                        <th
-                          className={`p-2 text-center ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
-                            } border-r border-gray-300`}
-                          style={{ width: "120px" }}
-                          onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("aadt")}
-                        >
-                          <div className="flex items-center justify-center gap-1 text-xs text-gray-900">
-                            AADT {getSortIcon("aadt")}
-                          </div>
-                        </th>
-                        <th
-                          className={`p-2 text-center ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
-                            } border-r border-gray-300`}
-                          style={{ width: "120px" }}
-                          onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("cost")}
-                        >
-                          <div className="flex items-center justify-center gap-1 text-xs text-gray-900">
-                            Cost {getSortIcon("cost")}
-                          </div>
-                        </th>
+
+                        {fields.map((field: string, index: number) => {
+                          const labelMap: Record<string, string> = {
+                            "TX_CONDITION_SCORE": "Condition (filtered)",
+                            "TX_DISTRESS_SCORE": "Distress",
+                            "TX_RIDE_SCORE": "Ride",
+                            "TX_AADT_CURRENT": "AADT",
+                            "TX_MAINTENANCE_COST_AMT": "Cost",
+                            "GEOMETRIC_MST": "MST",
+                            "GEOMETRIC_ALPHA_SHAPE": "Alpha Shape",
+                            "GEOMETRIC_CONVEX_HULL": "Convex Hull",
+                            "SCAG_RADAR": "Radar",
+                            "SCAG_OUTLYING": "Outlying",
+                            "SCAG_SKEWED": "Skewed",
+                            "SCAG_STRINGY": "Stringy",
+                            "SCAG_SPARSE": "Sparse",
+                            "SCAG_CONVEX": "Convex",
+                            "SCAG_CLUMPY": "Clumpy",
+                            "SCAG_SKINNY": "Skinny",
+                            "SCAG_STRIATED": "Striated",
+                            "SCAG_MONOTONIC": "Monotonic"
+                          }
+                          const label = labelMap[field] || field
+                          const loweredLabel = label.toLowerCase() as keyof typeof metricColumnToKey
+                          const sortKey = (metricColumnToKey[loweredLabel] as string | undefined) || field
+
+                          return (
+                            <th
+                              key={`${field}-${index}`}
+                              className={`p-2 text-center ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
+                                } border-r border-gray-300`}
+                              style={{ width: field === 'SCAG_RADAR' ? "120px" : field.startsWith('SCAG_') ? "50px" : "120px" }}
+                              onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort(sortKey as any)}
+                            >
+                              <div className="flex items-center justify-center gap-1 text-xs text-gray-900">
+                                {label} {getSortIcon(sortKey as any)}
+                              </div>
+                            </th>
+                          )
+                        })}
                       </tr>
                     </thead>
 
                     {/* Table Body */}
                     <TableBodyComponent
                       visibleRows={visibleRows}
-                      fields={fields}
+                      fields={fields.map((field: string) => field)}
                       isHighwayAvailable={isHighwayAvailable}
                       handleMapClick={handleMapClick}
                       handleChartClick={handleChartClick}
@@ -1499,6 +1577,7 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
                       scoreLookup={scoreLookup}
                       rankingActive={rankingActive}
                       azMode={azMode}
+                      maxConditionScore={maxConditionScore}
                     />
                   </table>
                 </div>

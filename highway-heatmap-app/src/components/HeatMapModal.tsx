@@ -4,6 +4,12 @@ import React from "react"
 import { useEffect, useRef, useState, useMemo, useCallback } from "react"
 import { FaTimes, FaChevronUp, FaChevronDown, FaTrash } from "react-icons/fa"
 import HighwaySegmentChart from "@/components/chart/HighwaySegmentChart"
+import GeometricChart from "@/components/chart/GeometricChart"
+import ScagnosticsChart from "@/components/chart/ScagnosticsChart"
+import { isGeometricField } from "@/lib/geometricUtils"
+
+// Helper to check if a field is a Scagnostics field
+const isScagnosticsField = (field: string): boolean => field.startsWith('SCAG_')
 
 interface PMISFeature {
   properties: {
@@ -34,7 +40,7 @@ interface SelectedScore {
 // Format county name: remove number prefix and convert from ALL CAPS to Capitalized
 const formatCountyName = (county: string | undefined): string => {
   if (!county) return ""
-  const withoutPrefix = county.replace(/^\d+\s*-\s*/, "")
+  const withoutPrefix = county.replace(/^\s*\d+\s*-\s*/, "")
   return withoutPrefix.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
@@ -44,6 +50,7 @@ interface HeatMapModalProps {
   county: string
   selectedScores: SelectedScore[]
   features: PMISFeature[]
+  maxScore?: number
   onClose: () => void
   onRemoveScore: (scoreValue: string) => void
 }
@@ -59,6 +66,7 @@ const HeatMapModal: React.FC<HeatMapModalProps> = ({
   county,
   selectedScores,
   features,
+  maxScore,
   onClose,
   onRemoveScore,
 }) => {
@@ -68,6 +76,7 @@ const HeatMapModal: React.FC<HeatMapModalProps> = ({
   const modalRef = useRef<HTMLDivElement>(null)
 
   // Memoize filtered data to prevent recalculation with deep comparison
+  // This is for standard score-based heatmaps that filter by condition score
   const heatMapData = useMemo(() => {
     if (!features.length) return []
     return features.filter((f) => {
@@ -82,6 +91,38 @@ const HeatMapModal: React.FC<HeatMapModalProps> = ({
       const cleanedOriginalDistrict = originalDistrict ? formatCountyName(originalDistrict) : null
       const districtMatch = cleanedOriginalDistrict && cleanedOriginalDistrict === county
 
+      // Filter by maxScore if provided, only for TX_CONDITION_SCORE
+      let conditionScoreMatch = true
+      if (maxScore !== undefined) {
+        const score = f.properties.TX_CONDITION_SCORE
+        if (typeof score === 'number') {
+          // Exclude scores that are 0 or greater than maxScore
+          if (score <= 0 || score > maxScore) {
+            conditionScoreMatch = false
+          }
+        } else if (typeof score === 'string') {
+          const numScore = parseFloat(score)
+          // Exclude scores that are 0 or greater than maxScore
+          if (!isNaN(numScore) && (numScore <= 0 || numScore > maxScore)) {
+            conditionScoreMatch = false
+          }
+        }
+      }
+
+      return highwayMatch && (countyMatch || districtMatch) && conditionScoreMatch
+    })
+  }, [features, highway, county, maxScore])
+
+  // For geometric charts, we need ALL segments (highway + county match only)
+  // The geometric chart component will filter damage points internally
+  const geometricData = useMemo(() => {
+    if (!features.length) return []
+    return features.filter((f) => {
+      const highwayMatch = f.properties.TX_SIGNED_HIGHWAY_RDBD_ID === highway
+      const countyMatch = f.properties.COUNTY && formatCountyName(f.properties.COUNTY) === county
+      const originalDistrict = f.properties.RESPONSIBLE_DISTRICT
+      const cleanedOriginalDistrict = originalDistrict ? formatCountyName(originalDistrict) : null
+      const districtMatch = cleanedOriginalDistrict && cleanedOriginalDistrict === county
       return highwayMatch && (countyMatch || districtMatch)
     })
   }, [features, highway, county])
@@ -169,9 +210,9 @@ const HeatMapModal: React.FC<HeatMapModalProps> = ({
         </button>
       </div>
       <div className="flex-grow min-h-0 overflow-y-auto p-4 flex flex-col items-center space-y-6">
-        {heatMapData.length > 0 && activeScores.length > 0 ? (
-          activeScores.map((score) => (
-            <div key={score.value} className="w-full border rounded-lg overflow-hidden transition-all duration-300 flex-none">
+        {(heatMapData.length > 0 || geometricData.length > 0) && activeScores.length > 0 ? (
+          activeScores.map((score, index) => (
+            <div key={`${score.value}-${index}`} className="w-full border rounded-lg overflow-hidden transition-all duration-300 flex-none">
               <div className="flex justify-between items-center bg-gray-100 px-3 py-2">
                 <h3 className="font-medium text-sm text-gray-700">{score.label}</h3>
                 <div className="flex space-x-2">
@@ -196,12 +237,31 @@ const HeatMapModal: React.FC<HeatMapModalProps> = ({
                   <>
                     {shouldRenderChart(score.value) ? (
                       <div className="w-full flex items-center justify-center bg-gray-50">
-                        <MemoizedHighwaySegmentChart
-                          key={`${highway}-${county}-${score.value}`}
-                          data={heatMapData}
-                          selectedHighway={highway}
-                          selectedScore={score}
-                        />
+                        {isScagnosticsField(score.value) ? (
+                          <ScagnosticsChart
+                            key={`${highway}-${county}-${score.value}-${index}`}
+                            data={geometricData}
+                            highway={highway}
+                            county={county}
+                            maxScore={maxScore}
+                          />
+                        ) : isGeometricField(score.value) ? (
+                          <GeometricChart
+                            key={`${highway}-${county}-${score.value}-${index}`}
+                            data={geometricData}
+                            geometryField={score.value}
+                            highway={highway}
+                            county={county}
+                            maxScore={maxScore}
+                          />
+                        ) : (
+                          <MemoizedHighwaySegmentChart
+                            key={`${highway}-${county}-${score.value}-${index}`}
+                            data={heatMapData}
+                            selectedHighway={highway}
+                            selectedScore={score}
+                          />
+                        )}
                       </div>
                     ) : (
                       <div className="w-full flex flex-col items-center justify-center py-8 bg-gray-50">
