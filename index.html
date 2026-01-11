@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heatnostics Research Plan</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Times New Roman', Georgia, serif;
+            background: white;
+            color: #111;
+            line-height: 1.6;
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        h1 {
+            font-size: 28px;
+            text-align: center;
+            margin-bottom: 5px;
+        }
+
+        h2 {
+            font-size: 20px;
+            border-bottom: 2px solid #333;
+            padding-bottom: 5px;
+            margin-top: 40px;
+        }
+
+        h3 {
+            font-size: 16px;
+            margin-top: 25px;
+            margin-bottom: 10px;
+        }
+
+        h4 {
+            font-size: 14px;
+            margin: 15px 0 8px 0;
+            font-style: italic;
+        }
+
+        p {
+            margin: 10px 0;
+            text-align: justify;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #555;
+            font-style: italic;
+            margin-bottom: 30px;
+        }
+
+        .abstract {
+            background: #f9f9f9;
+            padding: 15px 20px;
+            border-left: 3px solid #333;
+            margin: 20px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 14px;
+        }
+
+        th,
+        td {
+            border: 1px solid #333;
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        th {
+            background: #eee;
+            font-weight: bold;
+        }
+
+        .formula {
+            font-family: 'Courier New', monospace;
+            background: #f5f5f5;
+            padding: 10px 15px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            display: block;
+        }
+
+        .metric-card {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin: 15px 0;
+            background: #fafafa;
+        }
+
+        .metric-card h4 {
+            margin-top: 0;
+            font-style: normal;
+            font-weight: bold;
+        }
+
+        .status-done {
+            color: #228B22;
+            font-weight: bold;
+        }
+
+        .status-next {
+            color: #B8860B;
+            font-weight: bold;
+        }
+
+        .status-future {
+            color: #666;
+        }
+
+        ul,
+        ol {
+            margin: 10px 0 10px 20px;
+        }
+
+        li {
+            margin: 5px 0;
+        }
+
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .constraint-box {
+            border: 2px solid #333;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .ref {
+            font-size: 13px;
+            color: #444;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Heatnostics: A Diagnostic Framework for Raster Data</h1>
+    <p class="subtitle">Research Plan — Combining PDF Framework with Implementation Extensions</p>
+
+    <!-- Abstract -->
+    <div class="abstract">
+        <strong>Abstract:</strong> Traditional Scagnostics (Scatterplot Diagnostics) operate on point clouds and fail to
+        capture
+        the grid-based, temporal, and continuous nature of heatmap data. We propose <strong>Heatnostics</strong>, a
+        domain-specific
+        adaptation that characterizes heatmaps using three geometric pillars: <em>Grid Support</em> (spatial
+        availability),
+        <em>Morse-Smale Topology</em> (signal structure), and <em>EMD Flow</em> (axis transition). This framework
+        extracts
+        a compact feature vector for raster data with varying completeness.
+    </div>
+
+    <!-- Section 1: Constraints -->
+    <h2>1. Geometric Constraints for Heatmaps</h2>
+
+    <p>The fundamental difference between scatterplots and heatmaps requires a redefinition of geometric constraints.
+        The following table compares the standard Scagnostics constraints with our proposed Heatnostics constraints:</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Feature</th>
+                <th>Standard Scagnostics</th>
+                <th>Proposed Heatnostics</th>
+                <th>Rationale</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Vertices</strong></td>
+                <td>Points in ℝ²</td>
+                <td>Centroids of non-null grid cells</td>
+                <td>Heatmaps are discrete samples of a field, not infinite planes</td>
+            </tr>
+            <tr>
+                <td><strong>Edges</strong></td>
+                <td>Proximity-based (Delaunay)</td>
+                <td>Adjacency-based (8-connected Moore)</td>
+                <td>Adjacency is intrinsic to grids; Delaunay is irrelevant for lattices</td>
+            </tr>
+            <tr>
+                <td><strong>Weights</strong></td>
+                <td>Euclidean distance</td>
+                <td>Gradient-weighted or value-difference</td>
+                <td>Distance on a heatmap is "cost of change", not spatial separation</td>
+            </tr>
+            <tr>
+                <td><strong>Direction</strong></td>
+                <td>Undirected</td>
+                <td>Undirected (static) / Directed (temporal)</td>
+                <td>Time implies causality; undirected graphs lose transition info</td>
+            </tr>
+            <tr>
+                <td><strong>Nulls</strong></td>
+                <td>N/A (empty space)</td>
+                <td>Topological holes (boundaries)</td>
+                <td>"Null" is a feature (availability), not just emptiness</td>
+            </tr>
+            <tr>
+                <td><strong>Manifold</strong></td>
+                <td>Convex plane</td>
+                <td>Discrete surface with genus ≥ 0</td>
+                <td>Data availability may be fragmented (islands/holes)</td>
+            </tr>
+            <tr>
+                <td><strong>Linearity</strong></td>
+                <td>Straight lines</td>
+                <td>Geodesic paths on surface</td>
+                <td>Shortest path between cells must respect the value surface</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>1.1 Why These Constraints Matter</h3>
+
+    <div class="constraint-box">
+        <strong>The "Bad Statistics" Problem:</strong> Using Euclidean MST on filtered grid points causes metrics like
+        "Outlying" to be biased toward 100%. This happens because the MST must connect disconnected islands of valid
+        data
+        with massive "super-edges," identifying almost everything as an outlier.
+        <br><br>
+        <strong>The Fix:</strong> Use Geodesic MSF (Minimum Spanning Forest) on the Grid Graph. If two pixels are
+        adjacent
+        and both valid, edge weight = |v₁ - v₂|. If separated by nulls, there is no edge. The result is a Forest
+        (collection
+        of trees), not a single Tree.
+    </div>
+
+    <!-- Section 2: The Three Pillars -->
+    <h2>2. The Three Geometric Pillars</h2>
+
+    <p>Heatnostics uses three distinct geometric approaches, each designed to answer a different fundamental question
+        about
+        your data. Think of them as three different "lenses" for examining a heatmap:</p>
+
+    <h3>I. Spatial Support — "Where is the data?"</h3>
+    <div class="metric-card">
+        <p><strong>Geometry Used:</strong> Alpha Shapes + Connected Components</p>
+
+        <p><strong>What it measures:</strong> This pillar focuses on <em>data availability</em> — not the values
+            themselves,
+            but simply which cells have data and which don't. It treats the heatmap as a binary mask: valid cells vs.
+            holes.</p>
+
+        <p><strong>Why Alpha Shapes?</strong> An Alpha Shape is a "concave hull" — imagine shrink-wrapping the valid
+            data points.
+            Unlike a convex hull (which draws a rubber band around all points), an alpha shape follows the actual
+            boundary of the data,
+            including concave indentations. This lets us accurately measure holes <em>inside</em> the data region, not
+            just empty
+            space around it.</p>
+
+        <p><strong>Real-world analogy:</strong> Imagine looking at a road survey map. Some segments were surveyed, some
+            weren't.
+            Spatial Support tells you: "What percentage of the highway was actually measured? Are the gaps scattered
+            randomly or
+            concentrated in one area? Is the data fragmented into disconnected islands?"</p>
+
+        <p><strong>Key metrics:</strong> Porosity (hole ratio), Fragmentation (island count), Diagonal Connectivity
+            (connection pattern)</p>
+    </div>
+
+    <h3>II. Signal Topology — "What patterns exist in the values?"</h3>
+    <div class="metric-card">
+        <p><strong>Geometry Used:</strong> Morse-Smale Complex + Statistical Moments</p>
+
+        <p><strong>What it measures:</strong> This pillar focuses on the <em>actual values</em> in the heatmap — the
+            "terrain"
+            of the data. It finds local peaks (high spots), valleys (low spots), and the ridges/valleys connecting them.
+        </p>
+
+        <p><strong>Why Morse-Smale?</strong> Morse theory treats your heatmap as a 3D terrain where the Z-axis is the
+            cell value.
+            Just like a topographic map has mountain peaks, valley floors, and saddle points (passes between mountains),
+            your heatmap
+            has critical points. The Morse-Smale complex partitions the entire heatmap into regions that "flow" to the
+            same
+            peak and valley pairs.</p>
+
+        <p><strong>Real-world analogy:</strong> For highway condition data, a "peak" is a segment in excellent
+            condition,
+            a "valley" is a damaged segment. The number of peaks tells you if you have many scattered good spots or one
+            large
+            good region. The skewness (Distress Intensity) tells you if your road is "mostly good with a few potholes"
+            or
+            "uniformly mediocre."</p>
+
+        <p><strong>Key metrics:</strong> Peaks/Valleys (critical point count), Distress Intensity (skewness), Error
+            Noise (oscillation detection)</p>
+    </div>
+
+    <h3>III. Axis Transition — "How does data change along one axis?"</h3>
+    <div class="metric-card">
+        <p><strong>Geometry Used:</strong> Earth Mover's Distance (Optimal Transport)</p>
+
+        <p><strong>What it measures:</strong> This pillar focuses on <em>transitions along one axis</em> of the heatmap.
+            It asks: "How much does the data distribution change as we move along axis A? Is there a directional trend?"
+            This works for <strong>both time-based and variable-based</strong> heatmaps.</p>
+
+        <p><strong>Why Earth Mover's Distance?</strong> EMD (also called Wasserstein distance) measures the minimum
+            "work"
+            needed to transform one distribution into another. Imagine each row (or column) as a pile of dirt. EMD asks:
+            "How much dirt do I need to move to reshape row N into row N+1?" This captures
+            both the <em>magnitude</em> of change (flux) and the <em>direction</em> of change (drift).</p>
+
+        <p><strong>For time axis:</strong> Low flux = stable over years. Positive drift = deteriorating. Negative drift
+            = improving.</p>
+
+        <p><strong>For variable axis:</strong> Low flux = smooth gradient along the variable. High flux = abrupt
+            changes.
+            Drift indicates whether values tend to increase or decrease along that axis.</p>
+
+        <p><strong>Key metrics:</strong> Transition Flux (change magnitude), Drift (change direction)</p>
+    </div>
+
+    <!-- Section 3: Metric Definitions -->
+    <h2>3. Metric Definitions</h2>
+
+    <h3>3.1 Spatial Support Metrics</h3>
+    <p>These metrics measure <strong>data availability</strong> — where data exists, what's missing, and how coverage is
+        structured.</p>
+
+    <div class="metric-card">
+        <h4>Porosity <span class="status-done">[Implemented]</span></h4>
+        <code class="formula">Porosity = Hole_Area / Alpha_Shape_Area</code>
+        <p>Measures the fraction of missing data <em>inside</em> the concave boundary of valid cells. Unlike simple
+            sparsity,
+            porosity only counts holes within the data region, not empty space around it.</p>
+        <ul>
+            <li><strong>Range:</strong> 0 to 1</li>
+            <li><strong>0</strong> = Full grid, no holes</li>
+            <li><strong>0.3</strong> = 30% "Swiss cheese" pattern</li>
+            <li><strong>Use case:</strong> Detect missing survey coverage</li>
+        </ul>
+    </div>
+
+    <div class="metric-card">
+        <h4>Fragmentation <span class="status-done">[Implemented]</span></h4>
+        <code class="formula">Fragmentation = Count of 8-connected components</code>
+        <p>Counts how many disconnected islands of valid data exist using 8-connected flood fill (including diagonal
+            neighbors).</p>
+        <ul>
+            <li><strong>Range:</strong> 1 to N</li>
+            <li><strong>1</strong> = Single connected region</li>
+            <li><strong>High</strong> = Scattered islands of data</li>
+            <li><strong>Use case:</strong> Identify severe data gaps</li>
+        </ul>
+    </div>
+
+    <div class="metric-card">
+        <h4>Diagonal Connectivity <span class="status-done">[Implemented — Extension]</span></h4>
+        <code
+            class="formula">DiagonalConn = (Components_4connected - Components_8connected) / Components_4connected</code>
+        <p>Measures reliance on diagonal-only connections by comparing 4-connectivity vs 8-connectivity. Detects
+            "checkerboard"
+            gap patterns that row-wise methods miss.</p>
+        <ul>
+            <li><strong>Range:</strong> 0 to 1</li>
+            <li><strong>0</strong> = Well-connected (no diagonal reliance)</li>
+            <li><strong>High</strong> = Checkerboard pattern, sparse grid</li>
+            <li><strong>Use case:</strong> Irregular/sparse raster grids</li>
+        </ul>
+    </div>
+
+    <div class="metric-card">
+        <h4>Solidity <span class="status-next">[Next Phase]</span></h4>
+        <code class="formula">Solidity = Valid_Pixels / Convex_Hull_Area</code>
+        <p>Ratio of actual valid pixels to convex hull area. Low solidity indicates irregular boundary with concave
+            regions.</p>
+    </div>
+
+    <div class="metric-card">
+        <h4>Tortuosity <span class="status-next">[Next Phase]</span></h4>
+        <code class="formula">Tortuosity = Perimeter² / (4π × Area)</code>
+        <p>Measures boundary complexity. A circle has tortuosity = 1. Higher values indicate fractal-like coastlines.
+        </p>
+    </div>
+
+    <h3>3.2 Signal Topology Metrics</h3>
+    <p>These metrics measure <strong>value distribution</strong> — patterns, local extrema, and statistical properties.
+    </p>
+
+    <div class="metric-card">
+        <h4>Peaks & Valleys (Morse-Smale) <span class="status-done">[Implemented]</span></h4>
+        <code class="formula">Peaks = Count of local maxima (all neighbors have lower values)<br>
+Valleys = Count of local minima (all neighbors have higher values)</code>
+        <p>Identifies critical points in the value surface using Morse-Smale theory. For highway data: peaks = good
+            condition areas, valleys = damage hotspots.</p>
+        <ul>
+            <li><strong>Many peaks</strong> = Multiple distinct hotspots</li>
+            <li><strong>Few peaks</strong> = Smooth, uniform surface</li>
+            <li><strong>Use case:</strong> Find localized problem areas</li>
+        </ul>
+    </div>
+
+    <div class="metric-card">
+        <h4>Distress Intensity <span class="status-done">[Implemented — Extension]</span></h4>
+        <code class="formula">Distress Intensity = Skewness(all_scores) = E[(X - μ)³] / σ³</code>
+        <p>Measures asymmetry of score distribution. Differentiates "uniformly mediocre" roads from "mostly good with
+            severe potholes."</p>
+        <ul>
+            <li><strong>Negative skew</strong> = Tail towards low scores (damage hotspots)</li>
+            <li><strong>Positive skew</strong> = Tail towards high scores (isolated good spots)</li>
+            <li><strong>Zero</strong> = Symmetric distribution</li>
+            <li><strong>Use case:</strong> Characterize damage patterns</li>
+        </ul>
+    </div>
+
+    <div class="metric-card">
+        <h4>Error Noise <span class="status-done">[Implemented — Extension]</span></h4>
+        <code class="formula">Error Noise = Oscillations / (N - 2)<br>
+where Oscillation = sign change in (v[i] - v[i-1]) vs (v[i+1] - v[i])</code>
+        <p>Measures high-frequency oscillations. Counts how often values alternate up-down-up along each row. High rates
+            suggest
+            sensor errors rather than real physical changes.</p>
+        <ul>
+            <li><strong>Range:</strong> 0 to 1</li>
+            <li><strong>0</strong> = Smooth, monotonic data</li>
+            <li><strong>1</strong> = Maximum oscillation (pure noise)</li>
+            <li><strong>Use case:</strong> Flag suspicious data quality</li>
+        </ul>
+    </div>
+
+    <div class="metric-card">
+        <h4>Roughness <span class="status-next">[Next Phase]</span></h4>
+        <code class="formula">Roughness = Surface_Area_3D / Footprint_Area_2D</code>
+        <p>Treats heatmap as 3D surface. High roughness = volatile local changes.</p>
+    </div>
+
+    <h3>3.3 Axis Transition Metrics</h3>
+    <p>These metrics measure <strong>distribution changes along one axis</strong>. The framework supports two
+        directions:</p>
+    <ul>
+        <li><strong>Row-to-row:</strong> Compare distribution of each row to the next</li>
+        <li><strong>Column-to-column:</strong> Compare distribution of each column to the next</li>
+    </ul>
+
+    <div class="constraint-box">
+        <strong>Why no diagonal transitions?</strong><br><br>
+        Unlike spatial connectivity (which uses 8-connected neighbors for adjacency), EMD compares entire
+        row/column distributions — not individual cell pairs. Diagonal transitions are excluded for three reasons:
+        <ol>
+            <li><strong>Unclear semantics:</strong> Diagonal mixes two axes simultaneously (e.g., "time AND position"),
+                making interpretation confusing.</li>
+            <li><strong>Redundant information:</strong> Diagonal transitions decompose into row + column transitions.
+                Measuring them separately provides cleaner, more interpretable results.</li>
+            <li><strong>Anisotropic data:</strong> When axes represent different types (time vs. space, directed vs.
+                undirected),
+                mixing them in a diagonal obscures the distinct dynamics of each axis.</li>
+        </ol>
+        For isotropic data (both axes same type, e.g., lat × lon), diagonal analysis could detect directional texture
+        patterns — but this is a specialized extension, not part of the core framework.
+    </div>
+
+    <div class="metric-card">
+        <h4>Transition Flux <span class="status-next">[Partial — Row only]</span></h4>
+        <code class="formula">Flux = Average Wasserstein distance between consecutive rows (or columns)<br>
+W₁(P, Q) = ∫|CDF_P(x) - CDF_Q(x)|dx</code>
+        <p>Uses Earth Mover's Distance (EMD) to measure how much "work" is needed to transform one row's (or column's)
+            distribution into the next.</p>
+        <ul>
+            <li><strong>Low flux</strong> = Stable/smooth transitions along the axis</li>
+            <li><strong>High flux</strong> = Volatile, abrupt changes between consecutive slices</li>
+            <li><strong>Row direction (time axis):</strong> Measures year-to-year stability</li>
+            <li><strong>Column direction (position axis):</strong> Measures spatial gradient smoothness</li>
+        </ul>
+    </div>
+
+    <div class="metric-card">
+        <h4>Drift <span class="status-next">[Partial — Row only]</span></h4>
+        <code class="formula">Drift = Signed CDF difference = ∫(CDF_P(x) - CDF_Q(x))dx</code>
+        <p>Measures directional bias of change along an axis. Unlike flux (magnitude only), drift tells you which
+            direction values are shifting.</p>
+        <ul>
+            <li><strong>Positive drift</strong> = Distribution shifting toward lower values</li>
+            <li><strong>Negative drift</strong> = Distribution shifting toward higher values</li>
+            <li><strong>Zero</strong> = Balanced (no net directional change)</li>
+            <li><strong>Row direction (time axis):</strong> Positive = deteriorating, Negative = improving</li>
+            <li><strong>Column direction:</strong> Indicates spatial trend along that axis</li>
+        </ul>
+    </div>
+
+    <div class="metric-card">
+        <h4>Coherence <span class="status-future">[Future]</span></h4>
+        <code class="formula">Coherence = |∑V| / ∑|V|   where V = gradient vectors</code>
+        <p>Measures whether gradient vectors point in same direction (laminar flow) or random (turbulent). 1 = coherent;
+            0 = chaotic.</p>
+    </div>
+
+    <div class="metric-card">
+        <h4>Causal Entropy <span class="status-future">[Future]</span></h4>
+        <code class="formula">Causal Entropy = H(Y_t+1 | Y_t)</code>
+        <p>Conditional entropy measuring how predictable the next time step is. Low = predictable; High = chaotic.</p>
+    </div>
+
+    <!-- Section 4: Implementation Status -->
+    <h2>4. Implementation Status</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Metric</th>
+                <th>Status</th>
+                <th>Source</th>
+                <th>What Question Does It Answer?</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Spatial</td>
+                <td>Porosity</td>
+                <td class="status-done">Done</td>
+                <td>PDF</td>
+                <td>How much of the survey area is missing data (holes)?</td>
+            </tr>
+            <tr>
+                <td>Spatial</td>
+                <td>Fragmentation</td>
+                <td class="status-done">Done</td>
+                <td>PDF</td>
+                <td>Is the data one connected region or scattered islands?</td>
+            </tr>
+            <tr>
+                <td>Spatial</td>
+                <td>Diagonal Connectivity</td>
+                <td class="status-done">Done</td>
+                <td>Extension</td>
+                <td>Does data rely on diagonal connections (checkerboard gaps)?</td>
+            </tr>
+            <tr>
+                <td>Signal</td>
+                <td>Peaks & Valleys</td>
+                <td class="status-done">Done</td>
+                <td>PDF</td>
+                <td>How many distinct hotspots and coldspots exist?</td>
+            </tr>
+            <tr>
+                <td>Signal</td>
+                <td>Distress Intensity</td>
+                <td class="status-done">Done</td>
+                <td>Extension</td>
+                <td>Is damage uniform or concentrated in severe spots?</td>
+            </tr>
+            <tr>
+                <td>Signal</td>
+                <td>Error Noise</td>
+                <td class="status-done">Done</td>
+                <td>Extension</td>
+                <td>Is the data suspiciously noisy (sensor errors)?</td>
+            </tr>
+            <tr>
+                <td>Transition</td>
+                <td>Transition Flux</td>
+                <td class="status-next">Partial</td>
+                <td>PDF</td>
+                <td>How much does distribution change along an axis (row or column)?</td>
+            </tr>
+            <tr>
+                <td>Transition</td>
+                <td>Drift</td>
+                <td class="status-next">Partial</td>
+                <td>PDF</td>
+                <td>Is there a directional trend along the row or column axis?</td>
+            </tr>
+            <tr>
+                <td>Spatial</td>
+                <td>Solidity</td>
+                <td class="status-next">Next</td>
+                <td>PDF</td>
+                <td>How irregular is the data boundary shape?</td>
+            </tr>
+            <tr>
+                <td>Spatial</td>
+                <td>Tortuosity</td>
+                <td class="status-next">Next</td>
+                <td>PDF</td>
+                <td>How complex is the boundary perimeter?</td>
+            </tr>
+            <tr>
+                <td>Signal</td>
+                <td>Roughness</td>
+                <td class="status-next">Next</td>
+                <td>PDF</td>
+                <td>How volatile are local value changes?</td>
+            </tr>
+            <tr>
+                <td>Signal</td>
+                <td>Contrast (GLCM)</td>
+                <td class="status-next">Next</td>
+                <td>PDF</td>
+                <td>How sharp are differences between adjacent cells?</td>
+            </tr>
+            <tr>
+                <td>Spatial</td>
+                <td>Bridge Density</td>
+                <td class="status-future">Future</td>
+                <td>PDF</td>
+                <td>How fragile are the connections between data regions?</td>
+            </tr>
+            <tr>
+                <td>Signal</td>
+                <td>Anisotropy</td>
+                <td class="status-future">Future</td>
+                <td>PDF</td>
+                <td>Is there a dominant directional pattern in values?</td>
+            </tr>
+            <tr>
+                <td>Transition</td>
+                <td>Coherence</td>
+                <td class="status-future">Future</td>
+                <td>PDF</td>
+                <td>Are changes uniform or chaotic across the grid?</td>
+            </tr>
+            <tr>
+                <td>Transition</td>
+                <td>Causal Entropy</td>
+                <td class="status-future">Future</td>
+                <td>PDF</td>
+                <td>How predictable is the next row given the current?</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Section 5: Research Roadmap -->
+    <h2>5. Research Roadmap</h2>
+
+    <h3>Phase 1: Core Framework ✓ (Complete)</h3>
+    <p>Foundation metrics for grid-based heatmap analysis:</p>
+    <ul>
+        <li>Porosity, Fragmentation, Diagonal Connectivity (Spatial)</li>
+        <li>Peaks/Valleys, Distress Intensity, Error Noise (Signal)</li>
+        <li>Flux, Drift (Transition)</li>
+    </ul>
+
+    <h3>Phase 2: Shape & Texture Metrics (Next)</h3>
+    <p>Geometric complexity and surface characteristics:</p>
+    <ol>
+        <li><strong>Solidity</strong> — Simple: valid pixels / convex hull</li>
+        <li><strong>Roughness</strong> — Medium: 2.5D surface area calculation</li>
+        <li><strong>Tortuosity</strong> — Medium: Perimeter tracing</li>
+        <li><strong>Contrast</strong> — Complex: GLCM implementation</li>
+    </ol>
+
+    <h3>Phase 3: Advanced Topology (Future)</h3>
+    <p>Graph-theoretic and flow-based advanced metrics:</p>
+    <ul>
+        <li>Bridge Density (articulation points)</li>
+        <li>Anisotropy (structure tensor)</li>
+        <li>Coherence (gradient vector flow)</li>
+        <li>Causal Entropy (conditional prediction)</li>
+    </ul>
+
+    <h3>Phase 4: Heatmap Explorer (Future)</h3>
+    <p>Dimensionality reduction and clustering visualization:</p>
+    <p style="text-align: center; font-family: monospace;">
+        2,000+ Heatmaps → 12-Dim Feature Vector → 2D t-SNE/UMAP Projection
+    </p>
+
+    <!-- Section 6: Target Datasets -->
+    <h2>6. Target Dataset Types</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Dataset</th>
+                <th>Description</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Highway Pavement (PMIS)</strong></td>
+                <td>Condition scores over position × time. Varying completeness, temporal gaps.</td>
+                <td>Primary dataset</td>
+            </tr>
+            <tr>
+                <td><strong>Sensor Grids</strong></td>
+                <td>IoT networks, weather stations with irregular placement.</td>
+                <td>Future</td>
+            </tr>
+            <tr>
+                <td><strong>Satellite Imagery</strong></td>
+                <td>Raster tiles with missing data due to clouds or sensor failures.</td>
+                <td>Future</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Related Work -->
+    <h2>7. Related Work</h2>
+
+    <p>This section surveys the research landscape that informs and motivates Heatnostics. We organize our review into
+        six threads: (1) scagnostics and its extensions, (2) topological data analysis for scalar fields, (3) optimal
+        transport and distribution comparison, (4) texture analysis in image processing, (5) infrastructure condition
+        monitoring, and (6) handling missing data in raster visualization. We conclude by positioning Heatnostics at the
+        intersection of these threads, addressing gaps that none individually fills.</p>
+
+    <h3>7.1 Scagnostics: Origins and Extensions</h3>
+    <p>The term "scagnostics" (scatterplot diagnostics) was coined by John and Paul Tukey in 1985, though a formal
+        computational framework was not developed until Wilkinson, Anand, and Grossman's 2005 IEEE InfoVis paper [1].
+        Their approach constructs geometric graphs—Delaunay triangulation, Minimum Spanning Tree (MST), and alpha
+        hulls—from scatterplot point coordinates, then extracts nine metrics: <em>Outlying</em>, <em>Skewed</em>,
+        <em>Clumpy</em>, <em>Sparse</em>, <em>Striated</em>, <em>Convex</em>, <em>Skinny</em>, <em>Stringy</em>, and
+        <em>Monotonic</em>. These metrics enable automated navigation of large scatterplot matrices, guiding analysts
+        toward "interesting" variable pairs without exhaustive manual inspection.
+    </p>
+
+    <p><strong>Extensions and Applications.</strong> Since 2005, scagnostics have been extended in several directions.
+        Dang et al. [2] introduced ScagExplorer, an interactive system for exploring high-dimensional data using
+        scagnostics as a lens for dimension reduction. Lehmann et al. [3] extended scagnostics to 3D point clouds,
+        developing nD scagnostics that characterize data in higher-dimensional spaces—useful for guiding clustering or
+        outlier detection in spaces beyond visualization limits. Recent work has integrated scagnostics with deep
+        learning:
+        convolutional neural networks can now estimate scagnostics scores from scatterplot images, enabling real-time
+        classification at scale [4]. The ScagnosticsJS library provides browser-based implementations supporting 2D, 3D,
+        and higher-dimensional computations [3].</p>
+
+    <p><strong>Limitations for Heatmaps.</strong> Despite their utility, scagnostics are fundamentally designed for
+        point clouds in continuous Euclidean space. Three assumptions fail when applied to raster heatmaps:</p>
+    <ul>
+        <li><strong>Euclidean proximity:</strong> Scagnostics use Euclidean distance for graph construction, but heatmap
+            cells have discrete lattice adjacency—a cell is "near" its 4 or 8 neighbors, regardless of value.</li>
+        <li><strong>Completeness:</strong> Scagnostics assume all data points exist. Heatmaps often have systematic gaps
+            (null cells) that carry semantic meaning—a sensor was offline, a survey was incomplete.</li>
+        <li><strong>Static analysis:</strong> Standard scagnostics treat data as a single snapshot. Temporal heatmaps
+            (rows = time) require transition-aware metrics.</li>
+    </ul>
+    <p>Heatnostics addresses these gaps by replacing Euclidean primitives with grid-native structures, treating nulls as
+        topological features, and introducing axis transition metrics.</p>
+
+    <h3>7.2 Topological Data Analysis and Scalar Field Visualization</h3>
+    <p>Topological Data Analysis (TDA) provides mathematical tools for characterizing the "shape" of data. For scalar
+        fields—functions assigning values to points in space—Morse theory [5] serves as the foundational framework.
+        Morse theory analyzes a field through its <strong>critical points</strong>: locations where the gradient
+        vanishes
+        (maxima, minima, saddles). The topology of level sets changes only at critical points, making them natural
+        features for segmentation and summarization.</p>
+
+    <p><strong>Morse-Smale Complexes.</strong> The Morse-Smale (MS) complex partitions a domain into regions sharing
+        common gradient flow behavior—cells connected to the same maximum and minimum [6]. Edelsbrunner et al. [7]
+        formalized hierarchical MS complexes for piecewise-linear 2-manifolds. Gyulassy et al. [8] developed efficient
+        algorithms for computing MS complexes on 3D scalar fields, enabling applications in combustion simulation [9]
+        and climate modeling. Discrete Morse theory, introduced by Forman [10], extends these concepts to combinatorial
+        structures like meshes and grids, making them applicable to digital images.</p>
+
+    <p><strong>Persistence and Robustness.</strong> Persistence diagrams [11] quantify the "lifetime" of topological
+        features across scales, filtering noise from significant structure. A peak that persists across many threshold
+        levels is more significant than one that appears and disappears quickly. This robustness to localized noise is
+        essential for real-world data with measurement errors.</p>
+
+    <p><strong>Applications in Visualization.</strong> TDA has been applied to terrain analysis (watershed
+        segmentation),
+        medical imaging (tumor detection), materials science (pore structure analysis), and astrophysics (cosmic web
+        characterization). Our Peaks and Valleys metrics adapt critical point counting for discrete heatmaps, while
+        future work on Roughness and persistence-based filtering will further leverage TDA concepts.</p>
+
+    <h3>7.3 Optimal Transport and Distribution Comparison</h3>
+    <p>Optimal Transport (OT) theory, originating with Monge (1781) and formalized by Kantorovich (1942), provides a
+        principled framework for comparing probability distributions. The <strong>Earth Mover's Distance</strong> (EMD),
+        also known as the 1-Wasserstein distance, measures the minimum "work" (mass × distance) required to transform
+        one distribution into another [12]. Unlike divergences (KL, JS), EMD is a true metric satisfying the triangle
+        inequality, and it provides an interpretable transport plan—which parts of the source distribution map to which
+        parts of the target.</p>
+
+    <p><strong>Applications.</strong> Rubner et al. [13] pioneered EMD for image retrieval, showing it outperformed
+        histogram intersection for matching perceptually similar images. In machine learning, OT underpins domain
+        adaptation [14] and generative modeling (Wasserstein GANs). Peyré and Cuturi [15] provide a comprehensive survey
+        of computational optimal transport, including entropic regularization for scalable approximations.</p>
+
+    <p><strong>Temporal Change Detection.</strong> For time series and temporal data, OT-based methods detect
+        "change points" where the underlying distribution shifts significantly [16]. This non-parametric approach makes
+        no assumptions about distribution shape, detecting both abrupt transitions and gradual drifts. Applications
+        include financial anomaly detection, ECG monitoring, and human activity recognition.</p>
+
+    <p><strong>Heatnostics Application.</strong> Our Transition Flux metric computes EMD between consecutive rows (or
+        columns) of a heatmap, capturing global redistribution patterns across the axis. The Drift metric—signed CDF
+        integral—adds directionality, distinguishing improvement from deterioration in infrastructure contexts.</p>
+
+    <h3>7.4 Texture Analysis in Image Processing</h3>
+    <p>Texture analysis characterizes spatial patterns in images beyond simple statistics. Haralick et al. [17]
+        introduced the Gray-Level Co-occurrence Matrix (GLCM), computing joint probabilities of pixel intensity pairs
+        at specified offsets. From GLCM, features like Contrast, Correlation, Energy (uniformity), and Homogeneity
+        describe whether texture is smooth, structured, or chaotic. GLCM has been widely adopted in remote sensing
+        (land use classification), medical imaging (tumor grading), and materials science (surface quality).</p>
+
+    <p><strong>Minkowski Functionals.</strong> For binary or thresholded images, Minkowski functionals—area, perimeter,
+        and Euler characteristic—provide morphological descriptors rooted in integral geometry [18]. These have been
+        applied to cosmology (galaxy distribution), porous media analysis, and defect detection in manufacturing.</p>
+
+    <p><strong>Limitations for Sparse Data.</strong> Both GLCM and Minkowski functionals assume complete images. When
+        applied to sparse grids with missing data, they either fail (undefined co-occurrences) or produce biased
+        estimates (treating nulls as a "color"). Heatnostics adapts these concepts for sparse contexts: Porosity
+        quantifies holes using alpha shapes rather than pixel counting; planned Contrast metrics will compute GLCM
+        only over valid cell pairs.</p>
+
+    <h3>7.5 Infrastructure Condition Monitoring</h3>
+    <p>Pavement management systems (PMS) form a critical application domain for Heatnostics. Road agencies worldwide
+        collect condition data—Pavement Condition Index (PCI), International Roughness Index (IRI), distress surveys—
+        organized as spatial (location along highway) and temporal (year of survey) grids [19]. Deterioration modeling
+        predicts future conditions using Markov chains, survival analysis, or machine learning [20].</p>
+
+    <p><strong>Data Quality Challenges.</strong> Real pavement data exhibits systematic sparsity: segments are surveyed
+        on rotating schedules, sensors fail, weather disrupts collection. Traditional analyses impute missing values or
+        exclude incomplete records, losing information about the missingness pattern itself. For agencies, knowing
+        <em>where</em> data is missing—and whether gaps are random or systematic—is as important as the condition
+        scores themselves.
+    </p>
+
+    <p><strong>Spatial-Temporal Analysis.</strong> Geographic Information Systems (GIS) enable spatial visualization
+        and analysis of pavement data [21]. Machine learning approaches increasingly incorporate spatial structure,
+        recognizing that adjacent segments deteriorate similarly due to shared traffic and climate [22]. Graph Neural
+        Networks have been applied to road networks, propagating information along connectivity structure.</p>
+
+    <p><strong>Heatnostics Contribution.</strong> For infrastructure monitoring, Heatnostics provides domain-agnostic
+        summary statistics that complement traditional condition indices. Porosity quantifies survey completeness;
+        Fragmentation identifies disconnected monitored regions; Drift tracks whether conditions are improving or
+        deteriorating systemically, not just locally.</p>
+
+    <h3>7.6 Missing Data in Raster Visualization</h3>
+    <p>Missing data (NoData cells) in raster datasets arises from sensor failures, processing errors, cloud cover in
+        satellite imagery, or intentional survey design [23]. GIS tools provide imputation methods—inverse distance
+        weighting, kriging, neighbor-based filling—that estimate missing values from surrounding cells. These are
+        appropriate when the goal is producing complete surfaces for analysis, but they obscure information about
+        the spatial pattern of missingness [24].</p>
+
+    <p><strong>Missing Data as Information.</strong> In some contexts, the pattern of missingness carries semantic
+        meaning. In infrastructure monitoring, a gap may indicate construction (section closed for work),
+        administrative boundaries (different agency jurisdictions), or systematic data collection failures (equipment
+        deployed only in certain weather). Imputing these gaps erases this information; visualizing them as "holes"
+        preserves it.</p>
+
+    <p><strong>Heatnostics Approach.</strong> Rather than imputing missing values, Heatnostics treats nulls as
+        first-class topological features. The alpha shape bounds valid data; holes within this boundary are counted
+        and measured. Porosity, Fragmentation, and Diagonal Connectivity all characterize the <em>structure</em> of
+        availability, not just the presence of gaps. This aligns with cartographic best practices for uncertainty
+        visualization [25] and enables downstream analysis to account for data provenance.</p>
+
+    <h3>7.7 Positioning Heatnostics</h3>
+    <p>Heatnostics occupies a unique position at the intersection of these research threads:</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Approach</th>
+                <th>Data Type</th>
+                <th>Handles Nulls?</th>
+                <th>Axis Transition?</th>
+                <th>Domain</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Scagnostics [1]</td>
+                <td>Point clouds</td>
+                <td>No</td>
+                <td>No</td>
+                <td>Visualization</td>
+            </tr>
+            <tr>
+                <td>GLCM Texture [17]</td>
+                <td>Complete images</td>
+                <td>No</td>
+                <td>No</td>
+                <td>Image processing</td>
+            </tr>
+            <tr>
+                <td>TDA / Morse-Smale [6,8]</td>
+                <td>Continuous fields</td>
+                <td>Varies</td>
+                <td>Some methods</td>
+                <td>Scientific computing</td>
+            </tr>
+            <tr>
+                <td>OT Change Detection [16]</td>
+                <td>Time series</td>
+                <td>No</td>
+                <td>Yes</td>
+                <td>Signal processing</td>
+            </tr>
+            <tr>
+                <td>Pavement Modeling [19,20]</td>
+                <td>Condition indices</td>
+                <td>Imputation</td>
+                <td>Deterioration curves</td>
+                <td>Civil engineering</td>
+            </tr>
+            <tr>
+                <td><strong>Heatnostics</strong></td>
+                <td><strong>Sparse grids</strong></td>
+                <td><strong>Yes (topological)</strong></td>
+                <td><strong>Yes (EMD-based)</strong></td>
+                <td><strong>Visual analytics</strong></td>
+            </tr>
+        </tbody>
+    </table>
+    <p>By synthesizing graph-theoretic diagnostics from scagnostics, critical point analysis from TDA, distribution
+        comparison from optimal transport, and domain semantics from infrastructure monitoring, Heatnostics provides
+        a unified framework for characterizing sparse, temporal raster data. The key innovations are: (1) treating
+        nulls as topological features rather than data quality issues; (2) using grid-native 8-connectivity rather
+        than Euclidean proximity; and (3) supporting both row and column axis transitions through EMD-based metrics.</p>
+
+    <!-- References -->
+    <h2>8. References</h2>
+    <p class="ref">
+        [1] Wilkinson, L., Anand, A., & Grossman, R. (2005). Graph-theoretic scagnostics. <em>IEEE InfoVis.</em><br>
+        [2] Dang, T. N., Wilkinson, L., & Anand, A. (2011). Stacking graphic elements to avoid over-plotting. <em>IEEE
+            TVCG, 16</em>(6), 1044–1052.<br>
+        [3] Lehmann, D. J., Albuquerque, G., Eisemann, M., & Theisel, H. (2012). Selecting coherent and relevant plots
+        in large scatterplot matrices. <em>Computer Graphics Forum, 31</em>(6), 1895–1908.<br>
+        [4] Wang, Y., Han, F., Zhu, L., Deussen, O., & Chen, B. (2018). Line graph or scatter plot? Automatic selection
+        of methods for visualizing trends in time series. <em>IEEE TVCG, 24</em>(2), 1141–1154.<br>
+        [5] Morse, M. (1925). Relations between the critical points of a real function of n independent variables.
+        <em>Trans. AMS, 27</em>(3), 345–396.<br>
+        [6] Edelsbrunner, H., Harer, J., & Zomorodian, A. (2003). Hierarchical Morse-Smale complexes for piecewise
+        linear 2-manifolds. <em>Discrete Comput. Geom., 30</em>, 87–107.<br>
+        [7] Edelsbrunner, H., & Mücke, E. P. (1994). Three-dimensional alpha shapes. <em>ACM Trans. Graphics,
+            13</em>(1), 43–72.<br>
+        [8] Gyulassy, A., Natarajan, V., Pascucci, V., & Hamann, B. (2008). Efficient computation of Morse-Smale
+        complexes for three-dimensional scalar functions. <em>IEEE TVCG, 14</em>(6), 1462–1474.<br>
+        [9] Bremer, P.-T., Weber, G., Pascucci, V., Day, M., & Bell, J. (2010). Analyzing and tracking burning
+        structures in lean premixed hydrogen flames. <em>IEEE TVCG, 16</em>(2), 248–260.<br>
+        [10] Forman, R. (1998). Morse theory for cell complexes. <em>Advances in Mathematics, 134</em>(1), 90–145.<br>
+        [11] Edelsbrunner, H., Letscher, D., & Zomorodian, A. (2002). Topological persistence and simplification.
+        <em>Discrete Comput. Geom., 28</em>(4), 511–533.<br>
+        [12] Villani, C. (2008). <em>Optimal Transport: Old and New.</em> Springer.<br>
+        [13] Rubner, Y., Tomasi, C., & Guibas, L. J. (2000). The earth mover's distance as a metric for image retrieval.
+        <em>IJCV, 40</em>(2), 99–121.<br>
+        [14] Courty, N., Flamary, R., & Tuia, D. (2017). Optimal transport for domain adaptation. <em>IEEE TPAMI,
+            39</em>(9), 1853–1865.<br>
+        [15] Peyré, G., & Cuturi, M. (2019). Computational optimal transport. <em>Foundations and Trends in Machine
+            Learning, 11</em>(5–6), 355–607.<br>
+        [16] Truong, C., Oudre, L., & Vayatis, N. (2020). Selective review of offline change point detection methods.
+        <em>Signal Processing, 167</em>, 107299.<br>
+        [17] Haralick, R. M., Shanmugam, K., & Dinstein, I. (1973). Textural features for image classification. <em>IEEE
+            Trans. Syst. Man Cybern., 3</em>(6), 610–621.<br>
+        [18] Mecke, K. R., & Stoyan, D. (2000). <em>Statistical Physics and Spatial Statistics.</em> Springer.<br>
+        [19] FHWA. (2020). <em>Pavement Management Guide.</em> Federal Highway Administration, U.S. DOT.<br>
+        [20] Lytton, R. L. (1987). Concepts of pavement performance prediction and modeling. <em>Proc. 2nd North
+            American Conference on Managing Pavements.</em><br>
+        [21] Pierce, L. M., & McGovern, G. (2014). <em>NCHRP Synthesis 457: Incorporating pavement preservation into
+            MEPDG.</em> Transportation Research Board.<br>
+        [22] Zhang, Z., Sun, L., & Gao, F. (2022). Spatial-temporal deep learning for pavement performance prediction.
+        <em>ASCE J. Computing in Civil Eng., 36</em>(4).<br>
+        [23] Esri. (2024). Fill NoData holes in raster data. <em>ArcGIS Documentation.</em><br>
+        [24] Wilson, R., & Atkinson, P. M. (2005). The handbook of geographic information science. <em>Blackwell
+            Publishing.</em><br>
+        [25] MacEachren, A. M. (1992). Visualizing uncertain information. <em>Cartographic Perspectives, 13</em>, 10–19.
+    </p>
+
+    <hr style="margin-top: 40px;">
+    <p style="text-align: center; color: #666; font-size: 13px;">
+        Heatnostics Research Plan • Generated January 10, 2026
+    </p>
+
+</body>
+
+</html>
