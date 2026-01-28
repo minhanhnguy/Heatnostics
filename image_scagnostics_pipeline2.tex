@@ -1,0 +1,244 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[utf8]{inputenc} % Added for safety
+\usepackage[T1]{fontenc}    % Good practice for font encoding
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\title{Image-based Scagnostic Pipeline (Subpixel / Continuous Geometry)}
+\author{Generated pipeline}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document gives a concise, self-contained description of an image-only scagnostics pipeline designed to reproduce the geometric intent of traditional graph-based scagnostics (Wilkinson et al.) while remaining purely raster-based. It contains algorithmic steps, continuous formulas and their discrete approximations, parameter suggestions, and a mapping from traditional graph components to image-based replacements.
+\end{abstract}
+
+\section{Overview}
+Assumption: the input image \(I(x,y)\) is a sampled representation of a continuous intensity/density \(f(x,y)\). The pipeline reconstructs continuous geometric primitives (subpixel contours, medial axis with radius) and computes Euclidean measures (area, perimeter, arc-length) that mimic graph-based scagnostic quantities.
+
+High-level steps:
+\begin{enumerate}[leftmargin=*,noitemsep]
+  \item Input \& anti-alias (smooth)
+  \item Percentile / multi-threshold segmentation
+  \item Subpixel contour extraction (marching-squares)
+  \item Optional contour smoothing (spline)
+  \item Continuous geometry: area, perimeter, convex hull
+  \item Distance transform \(\rightarrow\) medial axis (continuous skeleton)
+  \item Weighted skeleton integrals and branch stats
+  \item Orientation field via structure tensor
+  \item Multi-scale aggregation \& normalization
+\end{enumerate}
+
+\section{Notation}
+\begin{description}
+  \item[\(I\)] input raster image (floating values)
+  \item[\(\sigma\)] Gaussian smoothing standard deviation (pixels)
+  \item[\(T\)] a chosen threshold (often a percentile of \(I\))
+  \item[\(M\)] binary mask \(M(x,y) = \mathbf{1}_{I(x,y) \ge T}\)
+  \item[\(C\)] subpixel contour: ordered list of floating-point vertices \(\{(x_i,y_i)\}_{i=1}^{N}\)
+  \item[\(P\)] perimeter (continuous approximation)
+  \item[\(A\)] area (continuous, polygon area)
+  \item[\(d(x,y)\)] Euclidean distance transform (distance to background)
+  \item[\(\mathcal{S}\)] medial axis / skeleton represented as continuous centerlines
+  \item[\(s\)] arc-length parameter along \(\mathcal{S}\)
+  \item[\(\kappa\)] curvature where needed
+\end{description}
+
+\section{Step-by-step pipeline and formulas}
+
+\subsection{1. Anti-alias / smoothing}
+Apply light Gaussian blur to stabilize interpolation:
+\[
+I_s = G_{\sigma} * I,\qquad \sigma \in [0.5,2.0]\ \text{pixels (typical)}
+\]
+This reduces quantization and makes marching-squares interpolation stable.
+
+\subsection{2. Percentile / multi-threshold segmentation}
+Choose one or several thresholds \(T_k\) using percentiles of \(I_s\) (e.g., 90\%, 95\%, 99\%) to create masks:
+\[
+M_k(x,y) = \mathbf{1}_{I_s(x,y) \ge T_k}.
+\]
+Multi-thresholds emulate the family of \(\alpha\)-shapes.
+
+\subsection{3. Subpixel contour extraction (marching squares)}
+For each mask \(M_k\), extract contours using marching squares / linear interpolation to produce a polyline \(C = \{(x_i,y_i)\}\) with floating coordinates. The contour vertices are subpixel coordinates.
+
+\subsection{4. Contour smoothing (optional)}
+If required, fit a smoothing spline \(\mathbf{c}(t)\), \(t\in[0,1]\), to the polyline points to remove high-frequency noise (e.g., cubic B-spline or Catmull--Rom).
+Use smoothing parameter chosen to preserve small features; avoid oversmoothing.
+
+\subsection{5. Continuous area and perimeter}
+Given a closed polyline \(C=\{(x_i,y_i)\}_{i=1}^N\) (ordered, closed):
+\paragraph{Area (shoelace formula)}
+\[
+A = \frac{1}{2}\left| \sum_{i=1}^N (x_i y_{i+1} - x_{i+1} y_i)\right|,\qquad (x_{N+1},y_{N+1})=(x_1,y_1).
+\]
+\paragraph{Perimeter (polyline)}
+\[
+P = \sum_{i=1}^{N} \sqrt{(x_{i+1}-x_i)^2 + (y_{i+1}-y_i)^2}.
+\]
+If using a spline \(\mathbf{c}(t)\), compute
+\[
+P = \int_{0}^{1} \|\mathbf{c}'(t)\|\,dt
+\]
+and approximate numerically.
+
+\paragraph{Isoperimetric quotient (for ``Skinny'')}
+\[
+\mathrm{IQ} = \frac{4\pi A}{P^2},\qquad \text{Skinny}\approx 1-\mathrm{IQ}\ (\text{or normalized}).
+\]
+
+\subsection{6. Convex hull (subpixel)}
+Compute convex hull of contour vertices \(\mathrm{hull}(C)\). Let \(A_{\mathrm{hull}}\) be its area. Convex measure:
+\[
+\text{Convex} = \frac{A}{A_{\mathrm{hull}}}.
+\]
+
+\subsection{7. Distance transform and medial axis (continuous skeleton)}
+Compute Euclidean distance transform \(d(x,y)\) on the binary mask \(M\):
+\[
+d(x,y) = \min_{(u,v)\in \text{background}} \sqrt{(x-u)^2 + (y-v)^2}.
+\]
+Extract medial axis \(\mathcal{S}\) as the ridge of \(d\) (maxima of distance along perpendicular directions). Represent \(\mathcal{S}\) as ordered centerline curves with associated local radius \(d(s)\).
+
+\paragraph{Discrete approximation for skeleton arc-length}
+If skeleton points along \(\mathcal{S}\) are \(\{(x_i,y_i)\}\), arc-length:
+\[
+L \approx \sum_{i} \sqrt{(x_{i+1}-x_i)^2 + (y_{i+1}-y_i)^2}.
+\]
+
+\paragraph{Weighted skeleton integral (MST-like)}
+To mimic spacing-sensitive MST edge-lengths, use:
+\[
+L_w \approx \sum_{i} d(x_i,y_i)\cdot \Delta s_i
+\]
+where \(\Delta s_i\) is segment length. This weights the centerline by local width (analogous to edge-length \(\times\) spacing).
+
+\subsection{8. Branch statistics and outlying}
+Extract connected branches of \(\mathcal{S}\) and compute branch lengths \(\{\ell_j\}\) and radii \(\{r_j\}\).
+Define outlying score as fraction of total mass (or area) in components/branches with small radius:
+\[
+\text{Outlying} \approx \frac{\sum_{j: r_j < r_{\mathrm{th}}} A_j}{A},
+\]
+or the fraction of branches with \(\ell_j\) much smaller/larger than median branch length (tunable threshold).
+
+\subsection{9. Clumpy (density blobs)}
+Compute watershed segmentation / connected components on smoothed density peaks to find blobs. Let \(B\) be number of blobs and \(a_i\) their areas. Example clumpiness measure:
+\[
+\text{Clumpy} = \frac{B\cdot \operatorname{Var}(\{a_i\})}{A^2} \quad \text{(normalized)}
+\]
+
+\subsection{10. Orientation field and striated / monotonic}
+Compute image gradients \(I_x,I_y\) (e.g., Sobel) and the structure tensor at each pixel:
+\[
+J = \begin{pmatrix} I_x^2 & I_x I_y \\ I_x I_y & I_y^2 \end{pmatrix},
+\]
+optionally smoothed with a Gaussian window. Let eigenvalues be \(\lambda_1\ge\lambda_2\). Coherency (local orientation strength):
+\[
+\text{coh} = \frac{\lambda_1 - \lambda_2}{\lambda_1 + \lambda_2 + \epsilon}.
+\]
+Collect orientation angles \(\theta(x,y)=\tfrac{1}{2}\arctan2(2I_xI_y, I_x^2 - I_y^2)\) in the mask and compute circular variance; striated score \(\approx 1-\) circular variance. For monotonicity, sample points along the principal skeleton path and compute Spearman correlation \(\rho\) between x and y ranks:
+\[
+\text{Monotonic} \approx |\rho|.
+\]
+
+\subsection{11. Multi-scale aggregation and normalization}
+Repeat key metrics across \(k\) thresholds \(\{T_k\}\) or radii \(r\), then aggregate (mean, median, slope across scales). Finally, robust-scale each metric (subtract median, divide by IQR) or apply rank-preserving mapping (isotonic regression) for downstream tasks.
+
+\section{Discrete approximations and numerical notes}
+\begin{itemize}
+  \item \textbf{Marching squares}: find level contours at 0.5 on smoothed mask \(M\) or at chosen intensity thresholds on \(I_s\). Resulting vertex coordinates are floating.
+  \item \textbf{Spline arc-length}: discretize spline at fine parameter resolution (e.g., 100--500 samples) and sum segment lengths.
+  \item \textbf{Distance transform}: use Euclidean distance transform (EDT) and ridge extraction (e.g., non-maximum suppression along gradient direction).
+  \item \textbf{Skeleton pruning}: remove spur branches shorter than a fraction of image diagonal (e.g., \(0.5\%\)--\(2\%\) diag).
+  \item \textbf{Stability}: use multi-scale smoothing and percentile thresholds to avoid brittle decisions.
+\end{itemize}
+
+\section{Mapping to original scagnostic objects}
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}p{0.32\linewidth}p{0.32\linewidth}p{0.32\linewidth}@{}}
+\toprule
+\textbf{Original graph object / purpose} & \textbf{Image-only replacement} & \textbf{Why (intent match)} \\
+\midrule
+Delaunay / $\alpha$-shape ($\alpha$-hull) & Subpixel contour(s) at multi-thresholds & Contours at varying levels emulate $\alpha$-shape family; vertices allow continuous hull area. \\
+MST (edge lengths) & Medial axis (distance-aware skeleton) & Skeleton centerlines + local radius approximate centerline connectivity and spacing. \\
+Edge-length statistics / Outliers & Branch length \& radius distribution & Long MST edges appear as long thin branches or large empty basins in distance transform. \\
+Convex hull / compactness & Convex hull of contour vertices & Polygon area and hull area computed continuously match convexity intent. \\
+Perimeter-based skinny & Spline perimeter \& area \(\rightarrow\) IQ & Continuous perimeter avoids staircase bias; IQ maps to skinny measure. \\
+Clump detection & Watershed / blob segmentation on density & Number and variance of blobs reproduce clumpy notion. \\
+Striated / orientation & Structure tensor coherence + long narrow branches & Orientation coherence corresponds to aligned edges/striations. \\
+Monotonic / trend & Spearman on principal skeleton path samples & Principal path ranking reproduces monotonic ordering. \\
+\bottomrule
+\end{tabular}
+\caption{Practical mapping between graph-based concepts and image-based replacements.}
+\end{table}
+
+\section{Algorithm (pseudocode)}
+\begin{lstlisting}[language=Python, basicstyle=\ttfamily\small]
+# Input: image I (float), scale_params, thresholds T_k
+I_s = gaussian_filter(I, sigma=sigma)
+for T in thresholds:
+    M = (I_s >= percentile(I_s, T))
+    contours = marching_squares(M)  # subpixel polylines
+    main_contour = select_largest_contour(contours)
+    if smooth_contour:
+        c = fit_spline(main_contour)
+    else:
+        c = main_contour
+    A = polygon_area(c)
+    P = polyline_length(c) or spline_arc_length(c)
+    hull = convex_hull(c)
+    Convex = A / area(hull)
+
+    d = euclidean_distance_transform(M)
+    S = extract_medial_axis(d)    # ridge extraction
+    S = prune_short_branches(S, min_len=0.005*diag)
+    L = arc_length(S)
+    Lw = sum( d(p) * ds for p along S )
+    branch_stats = compute_branch_lengths_and_radii(S, d)
+
+    blobs = watershed_on_density(I_s)
+    clumpy = measure_blob_count_and_variance(blobs)
+
+    J = structure_tensor(I_s)
+    coh_map = coherency(J)
+    striated = 1 - circular_variance(orientation_angles, mask=M)
+    monotonic = abs(spearmanr(sample_points_along_main_path(S)))
+# Aggregate metrics across thresholds, normalize, output vector
+\end{lstlisting}
+
+\section{Parameter recommendations (defaults to try)}
+\begin{itemize}
+  \item Raster resolution: $\ge$512 px on longest side if possible.
+  \item Gaussian blur $\sigma$: 0.5--2.0 px (start with 1.0).
+  \item Thresholds (percentiles): \{90, 95, 99\} or \{80, 90, 95\} depending on contrast.
+  \item Skeleton pruning length: 0.5\%--2.0\% of image diagonal.
+  \item Contour spline samples for arc-length: 200 samples per closed contour.
+  \item Structure tensor smoothing window: 3--9 px depending on scale.
+  \item Normalization: robust z-score (subtract median, divide by IQR).
+\end{itemize}
+
+\section{Validation checklist (recommended)}
+\begin{enumerate}[leftmargin=*,noitemsep]
+  \item Compare rank correlations (Spearman) between image metrics and graph metrics on synthetic canonical families (e.g., line, cluster, sparse, uniform).
+  \item Visual inspection: overlay subpixel contours \& skeleton on image.
+  \item Stability: vary $\sigma$, thresholds, and pruning length; measure metric variance.
+  \item Clustering sanity: run clustering on image-scagnostics vs graph-scagnostics and compute ARI.
+\end{enumerate}
+
+\section{Notes and caveats}
+\begin{itemize}
+  \item This pipeline is intended for images that represent densities or rasterized scatterplots (KDEs, heatmaps). It is \emph{not} appropriate for symbolic categorical rasters, low-resolution pixel art, or images where pixel adjacency is the only meaningful relation.
+  \item Even with continuous approximations, image scagnostics approximate the graph-based values; they are typically closer in rank/ordering than in raw numeric equality. Use rank-preserving mappings (isotonic regression) if numeric equivalence is required.
+\end{itemize}
+
+\end{document}

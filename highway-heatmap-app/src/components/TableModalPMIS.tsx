@@ -4,11 +4,11 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from "react"
 import { ITEMS_PER_PAGE } from "@/constants/pagination"
 import { routePublic } from "@/config"
 import { FaSearch, FaSpinner, FaChartLine, FaMapMarkerAlt, FaSort, FaSortUp, FaSortDown, FaChevronLeft, FaChevronRight } from "react-icons/fa"
-import Papa from "papaparse"
 import MiniSegmentChart, { type PMISFeature } from "@/components/chart/MiniSegmentChart"
 import MiniGeometricChart from "@/components/chart/MiniGeometricChart"
 import MiniRadarChart from "@/components/chart/MiniRadarChart"
 import { isGeometricField, getGeometryType, getGeometryLabel, computeScagnostics, extractDamagePoints, normalizePoints, type ScagnosticsResult } from "@/lib/geometricUtils"
+import { aggregateHighwayData } from "@/lib/dataAggregation"
 
 import { useIsMobile } from "@/hooks/useIsMobile"
 import Card from "@/components/mobile/Card"
@@ -204,6 +204,40 @@ const getScagKey = (field: string): keyof ScagnosticsResult | null => {
   return map[field] || null
 }
 
+// Strategic scagnostics computation for 0-2 point cases
+const computeStrategicScagnostics = (points: { x: number; y: number }[]): ScagnosticsResult => {
+  // 0 points: all zeros (highway in good condition)
+  if (points.length === 0) {
+    return {
+      outlying: 0, skewed: 0, stringy: 0, sparse: 0, convex: 0,
+      clumpy: 0, skinny: 0, striated: 0, monotonic: 0
+    }
+  }
+  // 1 point: all zeros
+  if (points.length === 1) {
+    return {
+      outlying: 0, skewed: 0, stringy: 0, sparse: 0, convex: 0,
+      clumpy: 0, skinny: 0, striated: 0, monotonic: 0
+    }
+  }
+  // 2 points: strategic assignments
+  if (points.length === 2) {
+    return {
+      outlying: 0,   // No outlier possible
+      skewed: 0,     // No distribution
+      stringy: 1,    // MST is just 1 edge
+      sparse: 0,     // No sparsity
+      convex: 1,     // Points fill the hull
+      clumpy: 0,     // No cluster
+      skinny: 1,     // Line is skinny
+      striated: 0,   // Need multiple lines
+      monotonic: 1   // Perfect monotonic
+    }
+  }
+  // 3+ points: use standard computation
+  return computeScagnostics(points)
+}
+
 // This new component will defer rendering of the MiniSegmentChart
 const DeferredChartCell: React.FC<{
   segmentData: PMISFeature[]
@@ -213,17 +247,22 @@ const DeferredChartCell: React.FC<{
   color: string
   index: number
   maxScore?: number
-}> = ({ segmentData, metric, getCategory, getCategoryColor, color, index, maxScore }) => {
+  minPointsK?: number
+  useStrategicScagnostics?: boolean
+}> = ({ segmentData, metric, getCategory, getCategoryColor, color, index, maxScore, minPointsK = 5, useStrategicScagnostics = false }) => {
   const [isReady, setIsReady] = useState(false)
 
   // Memoize scagnostics computation
   const scagnostics = useMemo(() => {
     if (!isScagnosticsField(metric) || segmentData.length === 0) return null
     const damagePoints = extractDamagePoints(segmentData, maxScore || 49)
-    if (damagePoints.length < 5) return null
+    if (damagePoints.length < minPointsK) return null
     const normalizedPoints = normalizePoints(damagePoints)
-    return computeScagnostics(normalizedPoints)
-  }, [segmentData, metric, maxScore])
+    // Use strategic computation if enabled, otherwise standard
+    return useStrategicScagnostics
+      ? computeStrategicScagnostics(normalizedPoints)
+      : computeScagnostics(normalizedPoints)
+  }, [segmentData, metric, maxScore, minPointsK, useStrategicScagnostics])
 
   useEffect(() => {
     // Stagger rendering to prevent blocking the main thread.
@@ -241,7 +280,7 @@ const DeferredChartCell: React.FC<{
     if (!scagnostics) {
       return (
         <div className="w-full h-full bg-gray-100 flex items-center justify-center text-xs text-gray-400">
-          {"< 5 pts"}
+          {`< ${minPointsK} pts`}
         </div>
       )
     }
@@ -348,6 +387,10 @@ interface TableModalPMISProps {
   headerContent?: React.ReactNode
   customFields?: string[]
   maxConditionScore?: number
+  hideIdentifierColumns?: boolean
+  minPointsK?: number // Minimum points required for scagnostics (default: 5)
+  onFilteredCountChange?: (count: number) => void // Callback for filtered out count
+  useStrategicScagnostics?: boolean // Use strategic scagnostics assignments for 1-2 point cases
 }
 
 type SortDirection = "asc" | "desc" | null
@@ -375,26 +418,58 @@ interface TableRowProps {
   rankingActive: boolean
   azMode: boolean
   maxConditionScore?: number
+  hideIdentifierColumns?: boolean
+  minPointsK?: number
+  useStrategicScagnostics?: boolean
 }
 
 const TableRow: React.FC<TableRowProps> = React.memo(
-  ({ item, fields, isHighwayAvailable, handleMapClick, handleChartClick, activeHeatMapData, getScoreCategory, getCategoryColor, segmentData, rowIndex, clickedMapKey, rankingScore, rankingHasScore, rankingActive, azMode, maxConditionScore }) => {
+  ({ item, fields, isHighwayAvailable, handleMapClick, handleChartClick, activeHeatMapData, getScoreCategory, getCategoryColor, segmentData, rowIndex, clickedMapKey, rankingScore, rankingHasScore, rankingActive, azMode, maxConditionScore, hideIdentifierColumns, minPointsK, useStrategicScagnostics }) => {
     const isMapClicked = clickedMapKey === `${item.highway}|${item.formattedCounty}`
     return (
       <tr className="hover:bg-blue-50 border-b border-gray-200">
-        {/* Highway */}
-        <td className="p-2 border-r border-gray-300 overflow-hidden">
-          <div className="w-full h-[56px] md:h-[100px] flex items-center">
-            <span className="text-xs font-medium truncate block text-gray-900">{item.highway}</span>
-          </div>
-        </td>
+        {!hideIdentifierColumns ? (
+          <>
+            {/* Highway */}
+            <td className="p-2 border-r border-gray-300 overflow-hidden">
+              <div className="w-full h-[56px] md:h-[100px] flex items-center">
+                <span className="text-xs font-medium truncate block text-gray-900">{item.highway}</span>
+              </div>
+            </td>
 
-        {/* County */}
-        <td className="p-2 border-r border-gray-300 overflow-hidden">
-          <div className="w-full h-[56px] md:h-[100px] flex items-center">
-            <span className="text-xs truncate block text-gray-900">{item.formattedCounty}</span>
-          </div>
-        </td>
+            {/* County */}
+            <td className="p-2 border-r border-gray-300 overflow-hidden">
+              <div className="w-full h-[56px] md:h-[100px] flex items-center">
+                <span className="text-xs truncate block text-gray-900">{item.formattedCounty}</span>
+              </div>
+            </td>
+          </>
+        ) : (
+          /* When hideIdentifierColumns is true, show MiniSegmentChart for the first column */
+          <td className="p-0 border-r border-gray-300 relative" style={{ width: "120px" }}>
+            <div className="w-full h-[56px] md:h-[100px]">
+              <button
+                onClick={() => handleChartClick(item.highway, item.formattedCounty, 'TX_CONDITION_SCORE')}
+                className="w-full h-full relative flex items-stretch justify-center"
+                title={`${item.highway} - ${item.formattedCounty}`}
+              >
+                {segmentData.length > 0 ? (
+                  <MiniSegmentChart
+                    data={segmentData}
+                    metric="TX_CONDITION_SCORE"
+                    getCategory={getScoreCategory}
+                    getCategoryColor={getCategoryColor}
+                    maxScore={maxConditionScore}
+                  />
+                ) : (
+                  <div className="w-full h-full bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+                    No Data
+                  </div>
+                )}
+              </button>
+            </div>
+          </td>
+        )}
 
 
 
@@ -432,6 +507,8 @@ const TableRow: React.FC<TableRowProps> = React.memo(
                       color={isGeometric ? '#374151' : (scoreData?.color || '#ccc')}
                       index={cellIndex}
                       maxScore={maxConditionScore}
+                      minPointsK={minPointsK}
+                      useStrategicScagnostics={useStrategicScagnostics}
                     />
                   ) : (
                     <div className="w-full h-full bg-gray-100 flex items-center justify-center text-xs text-gray-400">
@@ -470,6 +547,9 @@ interface TableBodyProps {
   rankingActive: boolean
   azMode: boolean
   maxConditionScore?: number
+  hideIdentifierColumns?: boolean
+  minPointsK?: number
+  useStrategicScagnostics?: boolean
 }
 
 const TableBodyComponent: React.FC<TableBodyProps> = React.memo(
@@ -488,6 +568,9 @@ const TableBodyComponent: React.FC<TableBodyProps> = React.memo(
     rankingActive,
     azMode,
     maxConditionScore,
+    hideIdentifierColumns,
+    minPointsK,
+    useStrategicScagnostics,
   }) => {
     return (
       <tbody>
@@ -515,6 +598,9 @@ const TableBodyComponent: React.FC<TableBodyProps> = React.memo(
               rankingActive={rankingActive}
               azMode={azMode}
               maxConditionScore={maxConditionScore}
+              hideIdentifierColumns={hideIdentifierColumns}
+              minPointsK={minPointsK}
+              useStrategicScagnostics={useStrategicScagnostics}
             />
           )
         })}
@@ -545,6 +631,10 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
   headerContent,
   customFields,
   maxConditionScore,
+  hideIdentifierColumns,
+  minPointsK = 5,
+  onFilteredCountChange,
+  useStrategicScagnostics = false,
 }) => {
   const [loading, setLoading] = useState(true)
   const [availableHighways, setAvailableHighways] = useState<Set<string>>(new Set())
@@ -625,6 +715,35 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
     }
     return bridgedMap
   }, [segmentDataByHighwayCounty])
+
+  // Calculate filtered and kept counts (rows with fewer than minPointsK damage points)
+  const { filteredCount, keptCount, totalCount } = useMemo(() => {
+    if (!customFields?.some(f => f.startsWith('SCAG_'))) {
+      return { filteredCount: 0, keptCount: 0, totalCount: 0 } // Only count for scagnostics tabs
+    }
+
+    let filtered = 0
+    let kept = 0
+    for (const [, segs] of segmentDataByHighwayCounty) {
+      const damagePoints = extractDamagePoints(segs, maxConditionScore || 49)
+      if (damagePoints.length < minPointsK) {
+        filtered++
+      } else {
+        kept++
+      }
+    }
+    return { filteredCount: filtered, keptCount: kept, totalCount: filtered + kept }
+  }, [segmentDataByHighwayCounty, maxConditionScore, minPointsK, customFields])
+
+  // Notify parent of filtered count changes
+  useEffect(() => {
+    if (onFilteredCountChange) {
+      onFilteredCountChange(filteredCount)
+    }
+  }, [filteredCount, onFilteredCountChange])
+
+  // Check if this is a scagnostics tab
+  const isScagnosticsTab = customFields?.some(f => f.startsWith('SCAG_')) ?? false
 
   // Memoize interestingness calculations separately for better performance
   const interestingnessCache = useMemo(() => {
@@ -772,44 +891,31 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
     return Object.values(processed)
   }, [fields, formatCountyName, viewType])
 
-  // Fetch CSV data
+  // Fetch and aggregate CSV data at runtime
   useEffect(() => {
     const fetchCSVData = async () => {
       try {
-        const csvFile = viewType === 'district' ? 'hw_dist_avg.csv' : 'hw_cnty_avg.csv'
-        const response = await fetch(`${routePublic}/files/${csvFile}`)
-        const csvText = await response.text()
+        const aggregatedData = await aggregateHighwayData(viewType)
 
-        Papa.parse(csvText, {
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true,
-          complete: (results) => {
-            const validData = results.data.filter((row: any) => {
-              if (viewType === 'district') {
-                return row.RESPONSIBLE_DISTRICT && row.TX_SIGNED_HIGHWAY_RDBD_ID
-              } else {
-                return row.COUNTY && row.TX_SIGNED_HIGHWAY_RDBD_ID
-              }
-            })
-            const processed = processFeatures(validData)
-
-            if (isMounted.current) {
-              setProcessedData(processed)
-              setLoading(false)
-              // Defer parent callback to avoid setState during parent render
-              if (onDataProcessed) {
-                queueMicrotask(() => onDataProcessed(processed))
-              }
-            }
-          },
-          error: (error: any) => {
-            console.error("Error parsing CSV:", error)
-            if (isMounted.current) setLoading(false)
-          },
+        const validData = aggregatedData.filter((row) => {
+          if (viewType === 'district') {
+            return row.RESPONSIBLE_DISTRICT && row.TX_SIGNED_HIGHWAY_RDBD_ID
+          } else {
+            return row.COUNTY && row.TX_SIGNED_HIGHWAY_RDBD_ID
+          }
         })
+        const processed = processFeatures(validData)
+
+        if (isMounted.current) {
+          setProcessedData(processed)
+          setLoading(false)
+          // Defer parent callback to avoid setState during parent render
+          if (onDataProcessed) {
+            queueMicrotask(() => onDataProcessed(processed))
+          }
+        }
       } catch (error: any) {
-        console.error("Error fetching CSV data:", error)
+        console.error("Error fetching/aggregating CSV data:", error)
         if (isMounted.current) setLoading(false)
       }
     }
@@ -1257,6 +1363,18 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
             </select>
           </div>
 
+          {/* Kept/Filtered count for scagnostics tabs */}
+          {isScagnosticsTab && totalCount > 0 && (
+            <div className={`flex items-center ${isMobile ? 'gap-1' : 'gap-2'} ${isMobile ? 'text-xs' : 'text-sm'}`}>
+              <span className="px-2 py-0.5 bg-green-100 text-green-800 rounded-md font-medium">
+                {keptCount} kept
+              </span>
+              <span className="px-2 py-0.5 bg-orange-100 text-orange-800 rounded-md font-medium">
+                {filteredCount} filtered
+              </span>
+            </div>
+          )}
+
           {/* Ranking button (desktop + mobile) */}
           <div className={`${isMobile ? 'flex-1' : 'ml-auto'} relative`}>
             <button
@@ -1499,26 +1617,39 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
                     {/* Table Header */}
                     <thead ref={headerRef} className="sticky top-0 bg-gray-100 border-b-2 border-gray-300 z-10 shadow-sm">
                       <tr className="text-gray-900 text-sm font-semibold">
-                        <th
-                          className={`p-2 text-left ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
-                            } border-r border-gray-300`}
-                          style={{ width: "120px" }}
-                          onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("highway")}
-                        >
-                          <div className="flex items-center gap-1 text-xs text-gray-900">
-                            Highway {getSortIcon("highway")}
-                          </div>
-                        </th>
-                        <th
-                          className={`p-2 text-left ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
-                            } border-r border-gray-300`}
-                          style={{ width: "100px" }}
-                          onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("county")}
-                        >
-                          <div className="flex items-center gap-1 text-xs text-gray-900">
-                            {viewType === "district" ? "District" : "County"} {getSortIcon("county")}
-                          </div>
-                        </th>
+                        {!hideIdentifierColumns ? (
+                          <>
+                            <th
+                              className={`p-2 text-left ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
+                                } border-r border-gray-300`}
+                              style={{ width: "120px" }}
+                              onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("highway")}
+                            >
+                              <div className="flex items-center gap-1 text-xs text-gray-900">
+                                Highway {getSortIcon("highway")}
+                              </div>
+                            </th>
+                            <th
+                              className={`p-2 text-left ${selectedMechanismId === "alpha-az" ? "" : "cursor-pointer hover:bg-gray-200"
+                                } border-r border-gray-300`}
+                              style={{ width: "100px" }}
+                              onClick={selectedMechanismId === "alpha-az" ? undefined : () => handleSort("county")}
+                            >
+                              <div className="flex items-center gap-1 text-xs text-gray-900">
+                                {viewType === "district" ? "District" : "County"} {getSortIcon("county")}
+                              </div>
+                            </th>
+                          </>
+                        ) : (
+                          <th
+                            className="p-2 text-center border-r border-gray-300"
+                            style={{ width: "120px" }}
+                          >
+                            <div className="flex items-center justify-center gap-1 text-xs text-gray-900">
+                              Condition
+                            </div>
+                          </th>
+                        )}
 
                         {fields.map((field: string, index: number) => {
                           const labelMap: Record<string, string> = {
@@ -1578,6 +1709,9 @@ const TableModalPMIS: React.FC<TableModalPMISProps> = ({
                       rankingActive={rankingActive}
                       azMode={azMode}
                       maxConditionScore={maxConditionScore}
+                      hideIdentifierColumns={hideIdentifierColumns}
+                      minPointsK={minPointsK}
+                      useStrategicScagnostics={useStrategicScagnostics}
                     />
                   </table>
                 </div>

@@ -16,6 +16,8 @@ import dynamicImport from "next/dynamic"
 import Papa from "papaparse"
 import { useIsMobile } from "@/hooks/useIsMobile"
 
+const ScagnosticsValidation = dynamicImport(() => import("@/components/ScagnosticsValidation"), { ssr: false })
+
 
 
 const ScoreGauge = dynamicImport(() => import("@/components/chart/ScoreGauge"), { ssr: false })
@@ -76,6 +78,23 @@ const STEP2_SCAGNOSTICS_FIELDS = [
   'SCAG_MONOTONIC'
 ]
 
+// Tab button component for consistent styling
+const TabButton: React.FC<{
+  isActive: boolean
+  onClick: () => void
+  children: React.ReactNode
+}> = ({ isActive, onClick, children }) => (
+  <button
+    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${isActive
+        ? 'bg-white text-blue-900 shadow-sm'
+        : 'bg-white/20 text-white hover:bg-white/30'
+      }`}
+    onClick={onClick}
+  >
+    {children}
+  </button>
+)
+
 const EXP3: React.FC = () => {
   // ─── Mobile detection ──────────────────────────────────────────
   const isMobile = useIsMobile()
@@ -98,15 +117,35 @@ const EXP3: React.FC = () => {
   const [debouncedTableSearch, setDebouncedTableSearch] = useState("")
 
   // Step 1: Geometric Graphs State
-  const [activeTab, setActiveTab] = useState<'pmis' | 'step1' | 'step2'>('pmis')
+  const [activeTab, setActiveTab] = useState<'pmis' | 'step1' | 'step1k3' | 'step2' | 'step2k3' | 'step2k3strategic' | 'step3' | 'step3k3' | 'step3k3strategic'>('pmis')
   const [geometricSearch, setGeometricSearch] = useState("")
   const [debouncedGeometricSearch, setDebouncedGeometricSearch] = useState("")
   const [geometricViewType, setGeometricViewType] = useState<'county' | 'district'>('county')
+
+  // Step 1 (K=3) State
+  const [geometricK3Search, setGeometricK3Search] = useState("")
+  const [debouncedGeometricK3Search, setDebouncedGeometricK3Search] = useState("")
+  const [geometricK3ViewType, setGeometricK3ViewType] = useState<'county' | 'district'>('county')
 
   // Step 2: Scagnostics State
   const [scagSearch, setScagSearch] = useState("")
   const [debouncedScagSearch, setDebouncedScagSearch] = useState("")
   const [scagViewType, setScagViewType] = useState<'county' | 'district'>('county')
+
+  // Step 2 (K=3) State
+  const [scagK3Search, setScagK3Search] = useState("")
+  const [debouncedScagK3Search, setDebouncedScagK3Search] = useState("")
+  const [scagK3ViewType, setScagK3ViewType] = useState<'county' | 'district'>('county')
+
+  // Step 2 (K=3 Strategic) State
+  const [scagK3StrategicSearch, setScagK3StrategicSearch] = useState("")
+  const [debouncedScagK3StrategicSearch, setDebouncedScagK3StrategicSearch] = useState("")
+  const [scagK3StrategicViewType, setScagK3StrategicViewType] = useState<'county' | 'district'>('county')
+
+  // Filtered counts for Step 2 tabs
+  const [step2FilteredCount, setStep2FilteredCount] = useState(0)
+  const [step2K3FilteredCount, setStep2K3FilteredCount] = useState(0)
+  const [step2K3StrategicFilteredCount, setStep2K3StrategicFilteredCount] = useState(0)
 
   // Mobile-specific state
   const [viewType, setViewType] = useState<'county' | 'district'>('county')
@@ -130,11 +169,29 @@ const EXP3: React.FC = () => {
     return () => clearTimeout(timer)
   }, [geometricSearch])
 
+  // Debounce for Step 1 (K=3) search
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedGeometricK3Search(geometricK3Search), 150)
+    return () => clearTimeout(timer)
+  }, [geometricK3Search])
+
   // Debounce for Step 2 search
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedScagSearch(scagSearch), 150)
     return () => clearTimeout(timer)
   }, [scagSearch])
+
+  // Debounce for Step 2 (K=3) search
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedScagK3Search(scagK3Search), 150)
+    return () => clearTimeout(timer)
+  }, [scagK3Search])
+
+  // Debounce for Step 2 (K=3 Strategic) search
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedScagK3StrategicSearch(scagK3StrategicSearch), 150)
+    return () => clearTimeout(timer)
+  }, [scagK3StrategicSearch])
 
   // Track if all modals were recently closed
   const [recentlyCleared, setRecentlyCleared] = useState(false)
@@ -168,11 +225,11 @@ const EXP3: React.FC = () => {
     if (width && height) setContainerDimensions({ width, height })
   }, [width, height])
 
-  // ─── Load PMIS features from trimmed CSV ───────────────────────
+  // ─── Load PMIS features from combined CSV ───────────────────────
   useEffect(() => {
     setIsPmisLoaded(false)
     setIsDecompressing(true)
-    Papa.parse(`${routePublic}/files/PMIS_2024_trimmed.csv`, {
+    Papa.parse(`${routePublic}/files/PMIS_combined.csv`, {
       download: true,
       header: true,
       dynamicTyping: true,
@@ -416,6 +473,39 @@ const EXP3: React.FC = () => {
     setProcessedData(data)
     if (Array.isArray(data) && data.length > 0) setIsTableLoaded(true)
   }, [])
+
+  // Helper to render the tab buttons header content
+  const renderTabsHeader = useMemo(() => (
+    <div className="flex gap-2 flex-wrap">
+      <TabButton isActive={activeTab === 'pmis'} onClick={() => setActiveTab('pmis')}>
+        PMIS Data
+      </TabButton>
+      <TabButton isActive={activeTab === 'step1'} onClick={() => setActiveTab('step1')}>
+        Step 1 (K=5)
+      </TabButton>
+      <TabButton isActive={activeTab === 'step1k3'} onClick={() => setActiveTab('step1k3')}>
+        Step 1 (K=3)
+      </TabButton>
+      <TabButton isActive={activeTab === 'step2'} onClick={() => setActiveTab('step2')}>
+        Step 2 (K=5)
+      </TabButton>
+      <TabButton isActive={activeTab === 'step2k3'} onClick={() => setActiveTab('step2k3')}>
+        Step 2 (K=3)
+      </TabButton>
+      <TabButton isActive={activeTab === 'step2k3strategic'} onClick={() => setActiveTab('step2k3strategic')}>
+        Step 2 (K=3 Strategic)
+      </TabButton>
+      <TabButton isActive={activeTab === 'step3'} onClick={() => setActiveTab('step3')}>
+        Step 3 (K=5)
+      </TabButton>
+      <TabButton isActive={activeTab === 'step3k3'} onClick={() => setActiveTab('step3k3')}>
+        Step 3 (K=3)
+      </TabButton>
+      <TabButton isActive={activeTab === 'step3k3strategic'} onClick={() => setActiveTab('step3k3strategic')}>
+        Step 3 (K=3 Strategic)
+      </TabButton>
+    </div>
+  ), [activeTab])
 
 
 
@@ -677,168 +767,229 @@ const EXP3: React.FC = () => {
             </div>
           )}
           {/* PMIS Data Tab Content */}
-          <div className={activeTab === 'pmis' ? 'block h-full' : 'hidden h-full'} style={{ display: activeTab === 'pmis' ? 'block' : 'none' }}>
-            {/* We clone tableModalComponent to add headerContent prop since it's memoized */}
-            <TableModalPMIS
-              title="PMIS Data"
-              containerDimensions={containerDimensions}
-              setSelectedHighway={setSelectedHighway}
-              addChart={handleAddChart}
-              activeHeatMapData={activeHeatMapData}
-              showMapModal={showMapModal}
-              mapModalOpen={mapModalOpen}
-              mapModalInfo={mapModalInfo}
-              search={debouncedTableSearch}
-              setSearch={setTableSearch}
-              features={pmisFeatures}
-              viewType={viewType}
-              setViewType={setViewType}
-              onDataProcessed={handleTableDataProcessed}
-              onSegmentDataReady={setSegmentDataByHighwayCounty}
-              onAvailableHighwaysReady={setAvailableHighways}
-              headerContent={
-                <div className="flex gap-2">
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'pmis'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('pmis')}
-                  >
-                    PMIS Data
-                  </button>
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step1'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('step1')}
-                  >
-                    Step 1: Geometric Graphs
-                  </button>
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step2'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('step2')}
-                  >
-                    Step 2: Scagnostics
-                  </button>
-                </div>
-              }
-            />
-          </div>
+          {/* PMIS Data Tab Content */}
+          {activeTab === 'pmis' && (
+            <div className="block h-full">
+              {/* We clone tableModalComponent to add headerContent prop since it's memoized */}
+              <TableModalPMIS
+                title="PMIS Data"
+                containerDimensions={containerDimensions}
+                setSelectedHighway={setSelectedHighway}
+                addChart={handleAddChart}
+                activeHeatMapData={activeHeatMapData}
+                showMapModal={showMapModal}
+                mapModalOpen={mapModalOpen}
+                mapModalInfo={mapModalInfo}
+                search={debouncedTableSearch}
+                setSearch={setTableSearch}
+                features={pmisFeatures}
+                viewType={viewType}
+                setViewType={setViewType}
+                onDataProcessed={handleTableDataProcessed}
+                onSegmentDataReady={setSegmentDataByHighwayCounty}
+                onAvailableHighwaysReady={setAvailableHighways}
+                headerContent={renderTabsHeader}
+              />
+            </div>
+          )}
 
-          {/* Step 1 Tab Content */}
-          <div className={activeTab === 'step1' ? 'block h-full' : 'hidden h-full'} style={{ display: activeTab === 'step1' ? 'block' : 'none' }}>
-            <TableModalPMIS
-              title="Step 1: Geometric Graphs"
-              containerDimensions={containerDimensions}
-              setSelectedHighway={setSelectedHighway}
-              addChart={handleAddChart}
-              activeHeatMapData={activeHeatMapData}
-              showMapModal={showMapModal}
-              mapModalOpen={mapModalOpen}
-              mapModalInfo={mapModalInfo}
-              search={debouncedGeometricSearch}
-              setSearch={setGeometricSearch}
-              features={pmisFeatures}
-              viewType={geometricViewType}
-              setViewType={setGeometricViewType}
-              onDataProcessed={undefined}
-              onSegmentDataReady={undefined}
-              onAvailableHighwaysReady={undefined}
-              customFields={STEP1_CUSTOM_FIELDS}
-              maxConditionScore={49}
-              headerContent={
-                <div className="flex gap-2">
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'pmis'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('pmis')}
-                  >
-                    PMIS Data
-                  </button>
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step1'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('step1')}
-                  >
-                    Step 1: Geometric Graphs
-                  </button>
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step2'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('step2')}
-                  >
-                    Step 2: Scagnostics
-                  </button>
-                </div>
-              }
-            />
-          </div>
+          {/* Step 1 (K=5) Tab Content */}
+          {/* Step 1 (K=5) Tab Content */}
+          {activeTab === 'step1' && (
+            <div className="block h-full">
+              <TableModalPMIS
+                title="Step 1: Geometric Graphs (K=5)"
+                containerDimensions={containerDimensions}
+                setSelectedHighway={setSelectedHighway}
+                addChart={handleAddChart}
+                activeHeatMapData={activeHeatMapData}
+                showMapModal={showMapModal}
+                mapModalOpen={mapModalOpen}
+                mapModalInfo={mapModalInfo}
+                search={debouncedGeometricSearch}
+                setSearch={setGeometricSearch}
+                features={pmisFeatures}
+                viewType={geometricViewType}
+                setViewType={setGeometricViewType}
+                onDataProcessed={undefined}
+                onSegmentDataReady={undefined}
+                onAvailableHighwaysReady={undefined}
+                customFields={STEP1_CUSTOM_FIELDS}
+                maxConditionScore={49}
+                minPointsK={5}
+                headerContent={renderTabsHeader}
+              />
+            </div>
+          )}
 
-          {/* Step 2 Tab Content - Scagnostics */}
-          <div className={activeTab === 'step2' ? 'block h-full' : 'hidden h-full'} style={{ display: activeTab === 'step2' ? 'block' : 'none' }}>
-            <TableModalPMIS
-              title="Step 2: Scagnostics"
-              containerDimensions={containerDimensions}
-              setSelectedHighway={setSelectedHighway}
-              addChart={handleAddChart}
-              activeHeatMapData={activeHeatMapData}
-              showMapModal={showMapModal}
-              mapModalOpen={mapModalOpen}
-              mapModalInfo={mapModalInfo}
-              search={debouncedScagSearch}
-              setSearch={setScagSearch}
-              features={pmisFeatures}
-              viewType={scagViewType}
-              setViewType={setScagViewType}
-              onDataProcessed={undefined}
-              onSegmentDataReady={undefined}
-              onAvailableHighwaysReady={undefined}
-              customFields={STEP2_SCAGNOSTICS_FIELDS}
-              maxConditionScore={49}
-              headerContent={
-                <div className="flex gap-2">
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'pmis'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('pmis')}
-                  >
-                    PMIS Data
-                  </button>
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step1'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('step1')}
-                  >
-                    Step 1: Geometric Graphs
-                  </button>
-                  <button
-                    className={`px-3 py-1 text-xs font-semibold rounded transition-colors ${activeTab === 'step2'
-                      ? 'bg-white text-blue-900 shadow-sm'
-                      : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    onClick={() => setActiveTab('step2')}
-                  >
-                    Step 2: Scagnostics
-                  </button>
-                </div>
-              }
-            />
-          </div>
+          {/* Step 1 (K=3) Tab Content */}
+          {/* Step 1 (K=3) Tab Content */}
+          {activeTab === 'step1k3' && (
+            <div className="block h-full">
+              <TableModalPMIS
+                title="Step 1: Geometric Graphs (K=3)"
+                containerDimensions={containerDimensions}
+                setSelectedHighway={setSelectedHighway}
+                addChart={handleAddChart}
+                activeHeatMapData={activeHeatMapData}
+                showMapModal={showMapModal}
+                mapModalOpen={mapModalOpen}
+                mapModalInfo={mapModalInfo}
+                search={debouncedGeometricK3Search}
+                setSearch={setGeometricK3Search}
+                features={pmisFeatures}
+                viewType={geometricK3ViewType}
+                setViewType={setGeometricK3ViewType}
+                onDataProcessed={undefined}
+                onSegmentDataReady={undefined}
+                onAvailableHighwaysReady={undefined}
+                customFields={STEP1_CUSTOM_FIELDS}
+                maxConditionScore={49}
+                minPointsK={3}
+                headerContent={renderTabsHeader}
+              />
+            </div>
+          )}
+
+          {/* Step 2 (K=5) Tab Content - Scagnostics */}
+          {/* Step 2 (K=5) Tab Content - Scagnostics */}
+          {activeTab === 'step2' && (
+            <div className="block h-full">
+              <TableModalPMIS
+                title="Step 2: Scagnostics (K=5)"
+                containerDimensions={containerDimensions}
+                setSelectedHighway={setSelectedHighway}
+                addChart={handleAddChart}
+                activeHeatMapData={activeHeatMapData}
+                showMapModal={showMapModal}
+                mapModalOpen={mapModalOpen}
+                mapModalInfo={mapModalInfo}
+                search={debouncedScagSearch}
+                setSearch={setScagSearch}
+                features={pmisFeatures}
+                viewType={scagViewType}
+                setViewType={setScagViewType}
+                onDataProcessed={undefined}
+                onSegmentDataReady={undefined}
+                onAvailableHighwaysReady={undefined}
+                customFields={STEP2_SCAGNOSTICS_FIELDS}
+                maxConditionScore={49}
+                minPointsK={5}
+                hideIdentifierColumns={true}
+                onFilteredCountChange={setStep2FilteredCount}
+                headerContent={renderTabsHeader}
+              />
+            </div>
+          )}
+
+          {/* Step 2 (K=3) Tab Content - Scagnostics */}
+          {/* Step 2 (K=3) Tab Content - Scagnostics */}
+          {activeTab === 'step2k3' && (
+            <div className="block h-full">
+              <TableModalPMIS
+                title="Step 2: Scagnostics (K=3)"
+                containerDimensions={containerDimensions}
+                setSelectedHighway={setSelectedHighway}
+                addChart={handleAddChart}
+                activeHeatMapData={activeHeatMapData}
+                showMapModal={showMapModal}
+                mapModalOpen={mapModalOpen}
+                mapModalInfo={mapModalInfo}
+                search={debouncedScagK3Search}
+                setSearch={setScagK3Search}
+                features={pmisFeatures}
+                viewType={scagK3ViewType}
+                setViewType={setScagK3ViewType}
+                onDataProcessed={undefined}
+                onSegmentDataReady={undefined}
+                onAvailableHighwaysReady={undefined}
+                customFields={STEP2_SCAGNOSTICS_FIELDS}
+                maxConditionScore={49}
+                minPointsK={3}
+                hideIdentifierColumns={true}
+                onFilteredCountChange={setStep2K3FilteredCount}
+                headerContent={renderTabsHeader}
+              />
+            </div>
+          )}
+
+          {/* Step 2 (K=3 Strategic) Tab Content - Scagnostics with strategic assignments */}
+          {/* Step 2 (K=3 Strategic) Tab Content - Scagnostics with strategic assignments */}
+          {activeTab === 'step2k3strategic' && (
+            <div className="block h-full">
+              <TableModalPMIS
+                title="Step 2: Scagnostics (K=3 Strategic)"
+                containerDimensions={containerDimensions}
+                setSelectedHighway={setSelectedHighway}
+                addChart={handleAddChart}
+                activeHeatMapData={activeHeatMapData}
+                showMapModal={showMapModal}
+                mapModalOpen={mapModalOpen}
+                mapModalInfo={mapModalInfo}
+                search={debouncedScagK3StrategicSearch}
+                setSearch={setScagK3StrategicSearch}
+                features={pmisFeatures}
+                viewType={scagK3StrategicViewType}
+                setViewType={setScagK3StrategicViewType}
+                onDataProcessed={undefined}
+                onSegmentDataReady={undefined}
+                onAvailableHighwaysReady={undefined}
+                customFields={STEP2_SCAGNOSTICS_FIELDS}
+                maxConditionScore={49}
+                minPointsK={1}
+                hideIdentifierColumns={true}
+                onFilteredCountChange={setStep2K3StrategicFilteredCount}
+                headerContent={renderTabsHeader}
+                useStrategicScagnostics={true}
+              />
+            </div>
+          )}
+
+          {/* Step 3 (K=5) Tab Content - Validation */}
+          {/* Step 3 (K=5) Tab Content - Validation */}
+          {activeTab === 'step3' && (
+            <div className="block h-full">
+              <ScagnosticsValidation
+                features={pmisFeatures}
+                viewType={viewType}
+                maxConditionScore={49}
+                minPointsK={5}
+                addChart={handleAddChart}
+                headerContent={renderTabsHeader}
+              />
+            </div>
+          )}
+
+          {/* Step 3 (K=3) Tab Content - Validation */}
+          {/* Step 3 (K=3) Tab Content - Validation */}
+          {activeTab === 'step3k3' && (
+            <div className="block h-full">
+              <ScagnosticsValidation
+                features={pmisFeatures}
+                viewType={viewType}
+                maxConditionScore={49}
+                minPointsK={3}
+                addChart={handleAddChart}
+                headerContent={renderTabsHeader}
+              />
+            </div>
+          )}
+
+          {/* Step 3 (K=3 Strategic) Tab Content - Validation with strategic assignments */}
+          {/* Step 3 (K=3 Strategic) Tab Content - Validation with strategic assignments */}
+          {activeTab === 'step3k3strategic' && (
+            <div className="block h-full">
+              <ScagnosticsValidation
+                features={pmisFeatures}
+                viewType={viewType}
+                maxConditionScore={49}
+                minPointsK={1}
+                addChart={handleAddChart}
+                headerContent={renderTabsHeader}
+                useStrategicData={true}
+              />
+            </div>
+          )}
         </div>
         {hasScores && (
           <div className="relative flex flex-col min-h-0 overflow-hidden rounded-lg shadow-md border border-gray-200 bg-white">

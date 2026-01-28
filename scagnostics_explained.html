@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graph-Theoretic Scagnostics: A Technical Reference</title>
+    <style>
+        :root {
+            --bg: #ffffff;
+            --text: #1a1a1a;
+            --muted: #666666;
+            --border: #e5e5e5;
+            --accent: #2563eb;
+            --mst: #16a34a;
+            --hull: #2563eb;
+            --alpha: #ea580c;
+            --warn: #ca8a04;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Times New Roman', Georgia, serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.8;
+            padding: 2rem;
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: normal;
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+
+        h2 {
+            font-size: 1.3rem;
+            font-weight: bold;
+            margin: 2rem 0 1rem 0;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.3rem;
+        }
+
+        .authors {
+            text-align: center;
+            font-style: italic;
+            color: var(--muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .abstract {
+            background: #f9f9f9;
+            border: 1px solid var(--border);
+            padding: 1rem;
+            margin: 1.5rem 0;
+            font-size: 0.95rem;
+        }
+
+        .abstract-title {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+
+        .section {
+            margin-bottom: 2rem;
+        }
+
+        .foundations-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .foundation-item {
+            border: 1px solid var(--border);
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .foundation-item h4 {
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .foundation-item svg {
+            display: block;
+            margin: 0.5rem auto;
+        }
+
+        .foundation-item p {
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        .param-note {
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            padding: 0.5rem;
+            margin-top: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .deterministic-note {
+            background: #f0fdf4;
+            border: 1px solid #86efac;
+            padding: 0.5rem;
+            margin-top: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        /* Metrics Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .metric-card {
+            border: 1px solid var(--border);
+            padding: 1rem;
+        }
+
+        .metric-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        .metric-num {
+            width: 24px;
+            height: 24px;
+            background: var(--text);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .metric-name {
+            font-weight: bold;
+            font-size: 1rem;
+        }
+
+        .metric-based {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            margin-left: auto;
+            font-family: sans-serif;
+        }
+
+        .metric-visual {
+            display: flex;
+            justify-content: center;
+            margin: 0.75rem 0;
+            background: #fafafa;
+            padding: 0.5rem;
+            border: 1px solid var(--border);
+        }
+
+        .metric-formula {
+            font-family: 'Courier New', monospace;
+            background: #f5f5f5;
+            padding: 0.3rem 0.5rem;
+            font-size: 0.8rem;
+            margin: 0.5rem 0;
+            border: 1px solid var(--border);
+        }
+
+        .metric-desc {
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        .metric-interp {
+            margin-top: 0.5rem;
+            font-size: 0.8rem;
+            background: #f0fdf4;
+            border: 1px solid #86efac;
+            padding: 0.3rem 0.5rem;
+        }
+
+        .metric-param {
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            padding: 0.3rem 0.5rem;
+        }
+
+        .params-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            font-size: 0.85rem;
+        }
+
+        .params-table th,
+        .params-table td {
+            border: 1px solid var(--border);
+            padding: 0.5rem;
+            text-align: left;
+        }
+
+        .params-table th {
+            background: #f5f5f5;
+        }
+
+        .reference {
+            background: #f9f9f9;
+            border: 1px solid var(--border);
+            padding: 1rem;
+            margin-top: 2rem;
+            font-size: 0.9rem;
+        }
+
+        .reference-title {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+
+        code {
+            font-family: 'Courier New', monospace;
+            background: #f5f5f5;
+            padding: 1px 4px;
+            font-size: 0.85em;
+        }
+
+        @media (max-width: 900px) {
+
+            .metrics-grid,
+            .foundations-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+
+            .metrics-grid,
+            .foundations-grid {
+                grid-template-columns: 1fr;
+            }
+
+            body {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Graph-Theoretic Scagnostics: A Technical Reference</h1>
+    <p class="authors">Based on Wilkinson, Anand, & Grossman (2005)</p>
+
+    <div class="abstract">
+        <p class="abstract-title">Abstract</p>
+        <p>
+            Scagnostics (scatterplot diagnostics) are nine graph-theoretic measures that characterize properties of
+            point clouds in scatterplots. These measures are derived from three foundational geometric structures:
+            the Minimum Spanning Tree (MST), Convex Hull, and Alpha Shape.
+        </p>
+    </div>
+
+    <div class="section">
+        <h2>1. Foundational Geometric Structures</h2>
+
+        <div class="foundations-grid">
+            <div class="foundation-item">
+                <h4 style="color: var(--mst)">Minimum Spanning Tree</h4>
+                <svg width="140" height="90" viewBox="0 0 140 90">
+                    <circle cx="20" cy="45" r="4" fill="#1a1a1a" />
+                    <circle cx="50" cy="20" r="4" fill="#1a1a1a" />
+                    <circle cx="70" cy="60" r="4" fill="#1a1a1a" />
+                    <circle cx="100" cy="35" r="4" fill="#1a1a1a" />
+                    <circle cx="120" cy="70" r="4" fill="#1a1a1a" />
+                    <line x1="20" y1="45" x2="50" y2="20" stroke="#16a34a" stroke-width="2" />
+                    <line x1="50" y1="20" x2="70" y2="60" stroke="#16a34a" stroke-width="2" />
+                    <line x1="70" y1="60" x2="100" y2="35" stroke="#16a34a" stroke-width="2" />
+                    <line x1="100" y1="35" x2="120" y2="70" stroke="#16a34a" stroke-width="2" />
+                </svg>
+                <p>Connects all points with minimum total edge length (Prim's algorithm).</p>
+                <div class="deterministic-note">✓ Deterministic</div>
+            </div>
+            <div class="foundation-item">
+                <h4 style="color: var(--hull)">Convex Hull</h4>
+                <svg width="140" height="90" viewBox="0 0 140 90">
+                    <polygon points="15,75 30,15 115,20 125,70 80,85" fill="none" stroke="#2563eb" stroke-width="2" />
+                    <circle cx="15" cy="75" r="4" fill="#1a1a1a" />
+                    <circle cx="30" cy="15" r="4" fill="#1a1a1a" />
+                    <circle cx="115" cy="20" r="4" fill="#1a1a1a" />
+                    <circle cx="125" cy="70" r="4" fill="#1a1a1a" />
+                    <circle cx="80" cy="85" r="4" fill="#1a1a1a" />
+                    <circle cx="60" cy="45" r="3" fill="#999" />
+                </svg>
+                <p>Smallest convex polygon enclosing all points (Graham scan).</p>
+                <div class="deterministic-note">✓ Deterministic</div>
+            </div>
+            <div class="foundation-item">
+                <h4 style="color: var(--alpha)">Alpha Shape</h4>
+                <svg width="140" height="90" viewBox="0 0 140 90">
+                    <path d="M15,60 L40,15 L80,20 L70,50 L105,75 L50,75 Z" fill="none" stroke="#ea580c"
+                        stroke-width="2" />
+                    <circle cx="15" cy="60" r="4" fill="#1a1a1a" />
+                    <circle cx="40" cy="15" r="4" fill="#1a1a1a" />
+                    <circle cx="80" cy="20" r="4" fill="#1a1a1a" />
+                    <circle cx="70" cy="50" r="4" fill="#1a1a1a" />
+                    <circle cx="105" cy="75" r="4" fill="#1a1a1a" />
+                    <circle cx="50" cy="75" r="4" fill="#1a1a1a" />
+                </svg>
+                <p>Generalized hull capturing concave regions (circumradius ≤ α).</p>
+                <div class="param-note">⚙️ α = P90(MST) × 1.5</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>2. The Nine Scagnostics Measures</h2>
+
+        <div class="metrics-grid">
+            <!-- 1. Outlying -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">1</div>
+                    <span class="metric-name">Outlying</span>
+                    <span class="metric-based">MST</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <circle cx="25" cy="30" r="4" fill="#1a1a1a" />
+                        <circle cx="40" cy="35" r="4" fill="#1a1a1a" />
+                        <circle cx="35" cy="25" r="4" fill="#1a1a1a" />
+                        <circle cx="50" cy="30" r="4" fill="#1a1a1a" />
+                        <circle cx="120" cy="25" r="4" fill="#dc2626" />
+                        <line x1="25" y1="30" x2="40" y2="35" stroke="#16a34a" stroke-width="2" />
+                        <line x1="40" y1="35" x2="35" y2="25" stroke="#16a34a" stroke-width="2" />
+                        <line x1="35" y1="25" x2="50" y2="30" stroke="#16a34a" stroke-width="2" />
+                        <line x1="50" y1="30" x2="120" y2="25" stroke="#dc2626" stroke-width="2" stroke-dasharray="4" />
+                    </svg>
+                </div>
+                <div class="metric-formula">Σ(outlier edges) / Σ(all edges)</div>
+                <p class="metric-desc">Ratio of long MST edges (> Q3 + 1.5×IQR).</p>
+                <div class="metric-interp">⬆️ High = Isolated points</div>
+                <div class="metric-param">⚙️ 1.5 × IQR threshold</div>
+            </div>
+
+            <!-- 2. Skewed -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">2</div>
+                    <span class="metric-name">Skewed</span>
+                    <span class="metric-based">MST</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <rect x="10" y="35" width="8" height="20" fill="#16a34a" />
+                        <rect x="22" y="30" width="8" height="25" fill="#16a34a" />
+                        <rect x="34" y="38" width="8" height="17" fill="#16a34a" />
+                        <rect x="46" y="42" width="8" height="13" fill="#16a34a" />
+                        <rect x="58" y="46" width="8" height="9" fill="#16a34a" />
+                        <rect x="70" y="49" width="8" height="6" fill="#16a34a" />
+                        <rect x="110" y="15" width="8" height="40" fill="#dc2626" />
+                        <text x="85" y="15" fill="#666" font-size="8" font-family="sans-serif">Edge dist.</text>
+                    </svg>
+                </div>
+                <div class="metric-formula">1 - (mean / max edge)</div>
+                <p class="metric-desc">Asymmetry in edge length distribution.</p>
+                <div class="metric-interp">⬆️ High = Right-skewed</div>
+            </div>
+
+            <!-- 3. Stringy -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">3</div>
+                    <span class="metric-name">Stringy</span>
+                    <span class="metric-based">MST</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <circle cx="10" cy="30" r="3" fill="#1a1a1a" />
+                        <circle cx="35" cy="25" r="3" fill="#1a1a1a" />
+                        <circle cx="60" cy="35" r="3" fill="#1a1a1a" />
+                        <circle cx="85" cy="28" r="3" fill="#1a1a1a" />
+                        <circle cx="110" cy="38" r="3" fill="#1a1a1a" />
+                        <circle cx="130" cy="30" r="3" fill="#1a1a1a" />
+                        <path d="M10,30 L35,25 L60,35 L85,28 L110,38 L130,30" fill="none" stroke="#16a34a"
+                            stroke-width="2" />
+                    </svg>
+                </div>
+                <div class="metric-formula">diameter(MST) / (n - 1)</div>
+                <p class="metric-desc">Longest path relative to point count.</p>
+                <div class="metric-interp">⬆️ High = Chain-like</div>
+            </div>
+
+            <!-- 4. Sparse -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">4</div>
+                    <span class="metric-name">Sparse</span>
+                    <span class="metric-based">α+Hull</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <polygon points="15,50 30,10 115,15 110,50" fill="none" stroke="#2563eb" stroke-width="1"
+                            stroke-dasharray="3" />
+                        <path d="M15,50 L30,10 L65,12 L55,30 L85,28 L115,15 L110,50 L75,48 L40,45 Z"
+                            fill="rgba(234,88,12,0.2)" stroke="#ea580c" stroke-width="2" />
+                        <ellipse cx="60" cy="30" rx="12" ry="10" fill="white" stroke="#ccc" />
+                        <text x="52" y="34" fill="#666" font-size="8" font-family="sans-serif">gap</text>
+                    </svg>
+                </div>
+                <div class="metric-formula">1 - (α-area / hull-area)</div>
+                <p class="metric-desc">Empty space within convex hull.</p>
+                <div class="metric-interp">⬆️ High = Holes/gaps</div>
+                <div class="metric-param">⚙️ Uses α parameter</div>
+            </div>
+
+            <!-- 5. Convex -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">5</div>
+                    <span class="metric-name">Convex</span>
+                    <span class="metric-based">α+Hull</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <polygon points="15,50 25,10 115,15 120,45 70,55" fill="rgba(37,99,235,0.15)" stroke="#2563eb"
+                            stroke-width="2" />
+                        <circle cx="35" cy="25" r="3" fill="#1a1a1a" />
+                        <circle cx="60" cy="30" r="3" fill="#1a1a1a" />
+                        <circle cx="85" cy="25" r="3" fill="#1a1a1a" />
+                        <circle cx="50" cy="42" r="3" fill="#1a1a1a" />
+                        <circle cx="80" cy="38" r="3" fill="#1a1a1a" />
+                    </svg>
+                </div>
+                <div class="metric-formula">α-area / hull-area</div>
+                <p class="metric-desc">How well points fill the hull.</p>
+                <div class="metric-interp">⬆️ High = Uniform fill</div>
+                <div class="metric-param">⚙️ Uses α parameter</div>
+            </div>
+
+            <!-- 6. Clumpy -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">6</div>
+                    <span class="metric-name">Clumpy</span>
+                    <span class="metric-based">MST</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <g>
+                            <circle cx="25" cy="25" r="3" fill="#1a1a1a" />
+                            <circle cx="35" cy="30" r="3" fill="#1a1a1a" />
+                            <circle cx="30" cy="40" r="3" fill="#1a1a1a" />
+                            <line x1="25" y1="25" x2="35" y2="30" stroke="#16a34a" stroke-width="2" />
+                            <line x1="35" y1="30" x2="30" y2="40" stroke="#16a34a" stroke-width="2" />
+                        </g>
+                        <g>
+                            <circle cx="105" cy="22" r="3" fill="#1a1a1a" />
+                            <circle cx="115" cy="30" r="3" fill="#1a1a1a" />
+                            <circle cx="110" cy="40" r="3" fill="#1a1a1a" />
+                            <line x1="105" y1="22" x2="115" y2="30" stroke="#16a34a" stroke-width="2" />
+                            <line x1="115" y1="30" x2="110" y2="40" stroke="#16a34a" stroke-width="2" />
+                        </g>
+                        <line x1="35" y1="30" x2="105" y2="22" stroke="#16a34a" stroke-width="1" stroke-dasharray="4" />
+                    </svg>
+                </div>
+                <div class="metric-formula">count(short) / count(all)</div>
+                <p class="metric-desc">Ratio of very short edges (< Q1 - 1.5×IQR).</p>
+                        <div class="metric-interp">⬆️ High = Local clusters</div>
+                        <div class="metric-param">⚙️ 1.5 × IQR threshold</div>
+            </div>
+
+            <!-- 7. Skinny -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">7</div>
+                    <span class="metric-name">Skinny</span>
+                    <span class="metric-based">Alpha</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <ellipse cx="70" cy="30" rx="60" ry="12" fill="none" stroke="#ea580c" stroke-width="2" />
+                        <circle cx="15" cy="30" r="3" fill="#1a1a1a" />
+                        <circle cx="45" cy="26" r="3" fill="#1a1a1a" />
+                        <circle cx="70" cy="30" r="3" fill="#1a1a1a" />
+                        <circle cx="95" cy="34" r="3" fill="#1a1a1a" />
+                        <circle cx="125" cy="30" r="3" fill="#1a1a1a" />
+                    </svg>
+                </div>
+                <div class="metric-formula">P² / (4π × A)</div>
+                <p class="metric-desc">Isoperimetric quotient of alpha shape.</p>
+                <div class="metric-interp">⬆️ High = Elongated</div>
+            </div>
+
+            <!-- 8. Striated -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">8</div>
+                    <span class="metric-name">Striated</span>
+                    <span class="metric-based">Delaunay</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <line x1="15" y1="15" x2="125" y2="15" stroke="#2563eb" stroke-width="1" />
+                        <line x1="15" y1="30" x2="125" y2="30" stroke="#2563eb" stroke-width="1" />
+                        <line x1="15" y1="45" x2="125" y2="45" stroke="#2563eb" stroke-width="1" />
+                        <circle cx="25" cy="15" r="3" fill="#1a1a1a" />
+                        <circle cx="60" cy="15" r="3" fill="#1a1a1a" />
+                        <circle cx="100" cy="15" r="3" fill="#1a1a1a" />
+                        <circle cx="45" cy="30" r="3" fill="#1a1a1a" />
+                        <circle cx="85" cy="30" r="3" fill="#1a1a1a" />
+                        <circle cx="35" cy="45" r="3" fill="#1a1a1a" />
+                        <circle cx="75" cy="45" r="3" fill="#1a1a1a" />
+                        <circle cx="110" cy="45" r="3" fill="#1a1a1a" />
+                    </svg>
+                </div>
+                <div class="metric-formula">parallel / total × 10</div>
+                <p class="metric-desc">Parallel edges in Delaunay (within 5°).</p>
+                <div class="metric-interp">⬆️ High = Layered</div>
+                <div class="metric-param">⚙️ 5° angle, ×10 mult.</div>
+            </div>
+
+            <!-- 9. Monotonic -->
+            <div class="metric-card">
+                <div class="metric-header">
+                    <div class="metric-num">9</div>
+                    <span class="metric-name">Monotonic</span>
+                    <span class="metric-based">Coords</span>
+                </div>
+                <div class="metric-visual">
+                    <svg width="140" height="60" viewBox="0 0 140 60">
+                        <line x1="15" y1="50" x2="125" y2="10" stroke="#ccc" stroke-width="1" stroke-dasharray="4" />
+                        <circle cx="20" cy="48" r="3" fill="#1a1a1a" />
+                        <circle cx="38" cy="42" r="3" fill="#1a1a1a" />
+                        <circle cx="55" cy="33" r="3" fill="#1a1a1a" />
+                        <circle cx="78" cy="26" r="3" fill="#1a1a1a" />
+                        <circle cx="100" cy="18" r="3" fill="#1a1a1a" />
+                        <circle cx="120" cy="12" r="3" fill="#1a1a1a" />
+                    </svg>
+                </div>
+                <div class="metric-formula">|ρ<sub>Spearman</sub>(x, y)|</div>
+                <p class="metric-desc">Rank correlation between coordinates.</p>
+                <div class="metric-interp">⬆️ High = Linear trend</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. Tunable Parameters Summary</h2>
+        <table class="params-table">
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Value</th>
+                    <th>Affects</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>α</code></td>
+                    <td>P90(MST) × 1.5</td>
+                    <td>Sparse, Convex, Skinny</td>
+                    <td>Controls alpha shape detail level</td>
+                </tr>
+                <tr>
+                    <td><code>Outlier threshold</code></td>
+                    <td>Q3 + 1.5 × IQR</td>
+                    <td>Outlying</td>
+                    <td>Tukey boxplot definition</td>
+                </tr>
+                <tr>
+                    <td><code>Cluster threshold</code></td>
+                    <td>Q1 - 1.5 × IQR</td>
+                    <td>Clumpy</td>
+                    <td>Often negative</td>
+                </tr>
+                <tr>
+                    <td><code>Parallel angle</code></td>
+                    <td>5°</td>
+                    <td>Striated</td>
+                    <td>Parallelism tolerance</td>
+                </tr>
+                <tr>
+                    <td><code>Min points (K)</code></td>
+                    <td>5</td>
+                    <td>All</td>
+                    <td>Below threshold → return 0</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>4. Historical Note</h2>
+        <p>
+            The 2005 paper included <em>Straight</em> (c<sub>straight</sub> = dist(t<sub>j</sub>, t<sub>k</sub>) /
+            diameter),
+            later replaced with <em>Sparse</em> as Straight was redundant with Stringy and Monotonic.
+        </p>
+    </div>
+
+    <div class="reference">
+        <p class="reference-title">References</p>
+        <p>[1] Wilkinson, L., Anand, A., & Grossman, R. (2005). Graph-Theoretic Scagnostics. <em>IEEE InfoVis</em>,
+            157-164.</p>
+        <p>[2] Tukey, J. W., & Tukey, P. A. (1985). Computer Graphics and Exploratory Data Analysis.</p>
+    </div>
+</body>
+
+</html>

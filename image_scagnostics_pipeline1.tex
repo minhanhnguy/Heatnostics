@@ -1,0 +1,798 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{colortbl}
+
+\definecolor{equivalent}{HTML}{22C55E}
+\definecolor{similar}{HTML}{EAB308}
+\definecolor{different}{HTML}{EF4444}
+\newcommand{\param}[1]{\colorbox{yellow!40}{$#1$}}
+
+\title{\textbf{Image-Theoretic Scagnostics for Heatmaps}\\[0.5em]
+\large A Morphological Pipeline Replacing Graph-Theoretic Primitives\\[0.3em]
+\normalsize Version 4: Full Skeleton-Based Equivalence}
+\author{Research Notes}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+
+Traditional scagnostics (Wilkinson et al., 2005) rely on \textbf{graph-theoretic primitives}:
+\begin{itemize}
+    \item Minimum Spanning Tree (MST)
+    \item Alpha Shape (Concave Hull)
+    \item Convex Hull
+\end{itemize}
+
+We propose replacing these with \textbf{image processing primitives} that operate on a fixed-resolution binary grid, achieving constant-time complexity with respect to point count $n$.
+
+Our approach replaces these with \textbf{image processing primitives} that operate on a fixed-resolution binary grid:
+\begin{itemize}
+    \item \textbf{Distance Transform}: Maps each pixel to its distance from the boundary
+    \item \textbf{Skeletonization}: Zhang-Suen thinning to extract 1-pixel medial axis
+    \item \textbf{Morphological Operations}: Dilation, erosion, closing
+\end{itemize}
+
+This achieves constant-time complexity with respect to point count $n$.
+
+\section{Pipeline Overview}
+
+\begin{enumerate}
+    \item \textbf{Filtering}: Extract damage points where $0 < \text{score} < 50$
+    \item \textbf{Rasterization}: Map points to a $256 \times 256$ binary grid
+    \item \textbf{Morphological Closing}: Replace Alpha Shape
+    \item \textbf{Contour Convex Hull}: Replace Graham Scan
+    \item \textbf{Skeletonization + Path Summation}: Replace MST
+    \item \textbf{Metric Computation}: Derive scagnostics from image features
+\end{enumerate}
+
+\section{Detailed Pipeline}
+
+\subsection{Step 1: Filtering}
+
+Given heatmap data $H$ with cells $(x, y, z)$ where $z$ is the condition score:
+\begin{equation}
+    P = \{(x, y) \mid 0 < z(x,y) < 50\}
+\end{equation}
+
+This isolates \textbf{damage points} (low scores) while excluding missing data ($z = 0$) and healthy segments ($z \geq 50$).
+
+\subsection{Step 2: Rasterization to Binary Image}
+
+Map the filtered points to a fixed $W \times H$ grid (we use $256 \times 256$):
+
+\begin{equation}
+    I[i,j] = \begin{cases}
+        1 & \text{if } \exists (x,y) \in P : \lfloor x \cdot W \rfloor = i \land \lfloor y \cdot H \rfloor = j \\
+        0 & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+where points are first normalized to $[0, 1]$:
+\begin{equation}
+    x' = \frac{x - x_{\min}}{x_{\max} - x_{\min}}, \quad
+    y' = \frac{y - y_{\min}}{y_{\max} - y_{\min}}
+\end{equation}
+
+\textbf{Complexity}: $O(n)$ for rasterization.
+
+\subsection{Step 3: Morphological Closing (Replaces Alpha Shape)}
+
+\subsubsection{Traditional Alpha Shape}
+\begin{itemize}
+    \item Compute Delaunay triangulation: $O(n \log n)$
+    \item Filter triangles by circumradius $\leq \alpha$
+    \item Extract boundary edges
+\end{itemize}
+
+\subsubsection{Morphological Closing}
+\begin{equation}
+    I_{\text{closed}} = \varepsilon_B(\delta_B(I))
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\delta_B(I)$ = \textbf{Dilation} with structuring element $B$
+    \item $\varepsilon_B(I)$ = \textbf{Erosion} with structuring element $B$
+\end{itemize}
+
+\begin{algorithm}[H]
+\caption{Morphological Closing}
+\begin{algorithmic}[1]
+\Require Binary image $I$, disk structuring element $B$ with radius $r$
+\State $I_{\text{dilated}} \gets \text{Dilate}(I, B)$ \Comment{Expand foreground, fill small holes}
+\State $I_{\text{closed}} \gets \text{Erode}(I_{\text{dilated}}, B)$ \Comment{Shrink back, preserve filled regions}
+\State \Return $I_{\text{closed}}$
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Complexity}: $O(W \times H \times r^2) = O(256^2 \times r^2)$ — constant in $n$.
+
+\subsubsection{Adaptive Morphological Closing (Important)}
+
+\textbf{Issue Discovered}: Applying morphological closing to thin shapes (chains, lines) artificially inflates their area. For example, a 1-pixel chain becomes 5 pixels thick after closing with $r=2$, causing:
+\begin{equation}
+    \text{Convex} = \frac{|I_{\text{closed}}|}{|I_{\text{hull}}|} \approx 0.88 \quad \text{(expected: } <0.3 \text{)}
+\end{equation}
+
+\textbf{Solution}: Use \textbf{Adaptive Closing} based on shape thickness:
+\begin{equation}
+    I_{\text{adaptive}} = \begin{cases}
+        I & \text{if } \max(D(I)) \leq \tau \quad \text{(thin shape)} \\
+        \varepsilon_B(\delta_B(I)) & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+where $D(I)$ is the Distance Transform and $\tau = \param{3}$ is the thin-shape threshold. This preserves original geometry for chains and lines while still filling gaps in denser patterns.
+
+
+\subsection{Step 4: Contour Convex Hull (Replaces Graham Scan)}
+
+\subsubsection{Traditional Graham Scan}
+\begin{itemize}
+    \item Sort all $n$ points by polar angle: $O(n \log n)$
+    \item Stack-based convex hull construction: $O(n)$
+\end{itemize}
+
+\subsubsection{Contour-Based Convex Hull}
+
+\begin{algorithm}[H]
+\caption{Pixel Convex Hull}
+\begin{algorithmic}[1]
+\Require Binary image $I_{\text{closed}}$
+\State $C \gets \text{FindContours}(I_{\text{closed}})$ \Comment{Moore boundary tracing: $O(W \times H)$}
+\State $B \gets \bigcup_{c \in C} \text{BoundaryPixels}(c)$ \Comment{Extract boundary points}
+\State $H \gets \text{GrahamScan}(B)$ \Comment{Hull on boundary only: $O(b \log b)$}
+\State \Return $H$
+\end{algorithmic}
+\end{algorithm}
+
+where $b = |B|$ is the number of boundary pixels (typically $b \ll n$ for dense data).
+
+\textbf{Complexity}: $O(W \times H) + O(b \log b)$ — scales with perimeter, not point count.
+
+\subsection{Step 5: Skeletonization + Path Summation (Replaces MST)}
+
+\subsubsection{Traditional MST}
+\begin{itemize}
+    \item Prim's algorithm: $O(n^2)$ or $O(n \log n)$ with Fibonacci heap
+    \item Produces tree connecting all points with minimum total edge weight
+    \item MST Diameter = longest path through the tree
+\end{itemize}
+
+\subsubsection{Distance Transform + Ridge Detection}
+
+The \textbf{Euclidean Distance Transform (EDT)} maps each foreground pixel to its distance from the nearest background pixel:
+
+\begin{equation}
+    D(p) = \min_{q \in \text{background}} \|p - q\|_2
+\end{equation}
+
+\textbf{Two-Pass Algorithm} (Meijster et al., 2000):
+\begin{algorithm}[H]
+\caption{Euclidean Distance Transform}
+\begin{algorithmic}[1]
+\Require Binary image $I$
+\State Initialize: $D[i,j] \gets \infty$ if $I[i,j] = 1$, else $D[i,j] \gets 0$
+\For{each row $i$ from top to bottom}
+    \For{each column $j$ from left to right}
+        \State $D[i,j] \gets \min(D[i,j], D[i-1,j]+1, D[i,j-1]+1, D[i-1,j-1]+\sqrt{2})$
+    \EndFor
+\EndFor
+\For{each row $i$ from bottom to top}
+    \For{each column $j$ from right to left}
+        \State $D[i,j] \gets \min(D[i,j], D[i+1,j]+1, D[i,j+1]+1, D[i+1,j+1]+\sqrt{2})$
+    \EndFor
+\EndFor
+\State \Return Distance field $D$
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Complexity}: $O(W \times H)$ — exactly two passes!
+
+\subsubsection{Ridge Detection}
+
+\textbf{Ridge pixels} are local maxima in the distance field:
+\begin{equation}
+    R = \{p \mid D(p) \geq D(q) \; \forall q \in N_8(p)\}
+\end{equation}
+
+where $N_8(p)$ is the 8-connected neighborhood of $p$.
+
+\textbf{Why Ridges Match MST Semantics}:
+\begin{itemize}
+    \item Ridge pixels lie equidistant from boundaries — the ``center'' of the shape
+    \item For elongated shapes, ridges follow the same path MST edges would
+    \item The longest ridge path corresponds to the MST diameter
+\end{itemize}
+
+\subsubsection{Thin-Shape Preservation (Critical)}
+
+\textbf{Key Insight}: Morphological closing is designed to fill gaps and smooth boundaries, but for thin elongated structures (chains, spirals, zigzags), it \textit{distorts the original connectivity topology}. This causes:
+\begin{itemize}
+    \item Artificial inflation of shape thickness ($\max(D) > \tau$ after closing)
+    \item Ridge detection via local maxima to be applied instead of direct pixel use
+    \item \textbf{Fragmentation at direction changes} (corners, curves) where local maxima detection fails
+    \item Broken BFS path connectivity, leading to incorrect Stringy scores
+\end{itemize}
+
+\textbf{Solution}: Perform thin-shape detection on the \textbf{original rasterized grid} before applying morphological closing:
+
+\begin{equation}
+    \text{isThinShape} = \max_{p \in I_{\text{original}}} D(p) \leq \tau
+\end{equation}
+
+where $\tau = \param{3}$ pixels (corresponding to 1-2 pixel wide structures).
+
+\textbf{Algorithm}:
+\begin{equation}
+    R = \begin{cases}
+        I_{\text{original}} & \text{if isThinShape (use all foreground pixels)} \\
+        \text{LocalMaxima}(D(I_{\text{closed}})) & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+This preserves the original connectivity structure for thin patterns while still benefiting from ridge detection for thicker shapes.
+
+\subsubsection{Stringy via Skeleton Path Summation}
+
+\textbf{Matches Graph-Theoretic Formula Structure}:
+\begin{align}
+    \text{Stringy}_{\text{graph}} &= \frac{\text{MST Diameter}}{n - 1} \\
+    \text{Stringy}_{\text{image}} &= \frac{\sum_{k=1}^{K} \text{LongestPath}(S_k)}{|S|}
+\end{align}
+
+where $S_k$ are the $K$ connected components of the skeleton $S$, and $|S|$ is the total skeleton pixel count.
+
+\textbf{Key Insight}: We \textbf{always skeletonize} the pattern to 1-pixel width using Zhang-Suen thinning. This ensures:
+\begin{itemize}
+    \item Skeleton pixel count $|S|$ is analogous to MST edge count $(n-1)$: both represent the connectivity ``mass''
+    \item Summing longest paths across components handles gaps (like MST would connect them)
+    \item The ratio structure (path length / total structure size) matches the graph-theoretic formula
+\end{itemize}
+
+\textbf{Results}:
+\begin{itemize}
+    \item A perfect chain has Stringy $\approx 1.0$ (longest path $\approx |S|$)
+    \item A cluster has Stringy $\ll 1.0$ (short path relative to skeleton mass)
+    \item Zigzags, spirals, and chains all achieve Stringy $\approx 1.0$
+\end{itemize}
+
+Computed via BFS from skeleton endpoints to find longest path in each component.
+
+\section{Metric Formulas: Detailed Comparison}
+
+\subsection{Formula Equivalence Analysis}
+
+For each of the 9 scagnostics metrics, we analyze whether the graph-theoretic and image-theoretic formulas are:
+\begin{itemize}
+    \item \textcolor{equivalent}{\textbf{Equivalent}}: Same mathematical structure, expected to produce similar values
+    \item \textcolor{similar}{\textbf{Similar}}: Same semantic intent, different proxy measurement
+    \item \textcolor{different}{\textbf{Different}}: Captures related but distinct concepts
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Scagnostics Metric Mapping with Equivalence Analysis (Updated v4)}
+\small
+\begin{tabular}{@{}p{1.5cm}p{3.5cm}p{4.5cm}p{2cm}@{}}
+\toprule
+\textbf{Metric} & \textbf{Graph-Theoretic} & \textbf{Image-Theoretic (v2)} & \textbf{Equivalence} \\\midrule
+
+\textbf{Stringy} &
+$\dfrac{\text{MST diameter}}{n-1}$ &
+$\dfrac{\text{path}}{|S|}$ (skeleton-normalized) &
+\cellcolor{equivalent!30}\textbf{Equivalent} \\[1.5em]
+
+\textbf{Sparse} &
+$1 - \dfrac{A_{\alpha}}{A_{\text{hull}}}$ &
+$\alpha(1 - \dfrac{|I_{\text{orig}}|}{|I_{\text{hull}}|}) + (1-\alpha)\dfrac{|I_{\text{holes}}|}{|I_{\text{hull}}|}$ &
+\cellcolor{equivalent!30}\textbf{Equivalent} \\[1.5em]
+
+\textbf{Convex} &
+$\dfrac{A_{\alpha}}{A_{\text{hull}}}$ &
+$\dfrac{|I_{\text{closed}}|}{|I_{\text{hull}}|}$ &
+\cellcolor{equivalent!30}\textbf{Equivalent} \\[1.5em]
+
+\textbf{Skinny} &
+$\dfrac{P^2}{4\pi A}$ &
+$\dfrac{(\text{Perimeter})^2}{4\pi \cdot \text{Area}}$ &
+\cellcolor{equivalent!30}\textbf{Identical} \\[1.5em]
+
+\textbf{Clumpy} &
+$\dfrac{|\{e : |e| < Q_1 - 1.5 \cdot \text{IQR}\}|}{|E_{\text{MST}}|}$ &
+$\dfrac{|\{b : |b| < Q_1 - 1.5 \cdot \text{IQR}\}|}{|B_S|}$ (skeleton branches) &
+\cellcolor{equivalent!30}\textbf{Equivalent} \\[1.5em]
+
+\textbf{Outlying} &
+$\dfrac{\sum_{e > Q_3 + 1.5 \cdot \text{IQR}} |e|}{\sum |E_{\text{MST}}|}$ &
+$\dfrac{\sum_{\text{long endpoints}} \text{path}_i}{|S|}$ &
+\cellcolor{equivalent!30}\textbf{Equivalent} \\[1.5em]
+
+\textbf{Skewed} &
+$1 - \dfrac{\bar{e}}{e_{\max}}$ &
+$1 - \dfrac{\bar{R}}{R_{\max}}$ (background ridges) &
+\cellcolor{equivalent!30}\textbf{Equivalent} \\[1.5em]
+
+\textbf{Striated} &
+$\dfrac{|\{e : \theta_e \approx \theta_j\}|}{|E_{\text{Delaunay}}|}$ &
+$\dfrac{|\{s : |\theta_s - \theta_{\text{dom}}| < 5°\}|}{|S_{\text{segments}}|}$ &
+\cellcolor{equivalent!30}\textbf{Equivalent} \\[1.5em]
+
+\textbf{Monotonic} &
+$|\rho_{\text{Spearman}}(x, y)|$ &
+$|\rho(r, \text{centroid}_r)|$ &
+\cellcolor{equivalent!30}\textbf{Equivalent} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Detailed Formula Explanations}
+
+\subsubsection{Stringy — \textcolor{equivalent}{Equivalent} (Updated v3)}
+
+\textbf{Graph-Theoretic}:
+\begin{equation}
+    \text{Stringy}_{\text{graph}} = \frac{\text{MST Diameter}}{n - 1}
+\end{equation}
+MST diameter is the longest path through the tree. The denominator $(n-1)$ is the total number of MST edges. A value close to 1 indicates a chain-like structure where the diameter spans nearly all edges.
+
+\textbf{Image-Theoretic (Updated)}:
+\begin{equation}
+    \text{Stringy}_{\text{image}} = \frac{\sum_{k=1}^{K} \text{LongestPath}(S_k)}{|S|}
+\end{equation}
+where:
+\begin{itemize}
+    \item $S$ = skeleton from Zhang-Suen thinning (always 1-pixel wide)
+    \item $S_k$ = the $k$-th connected component of the skeleton
+    \item $|S|$ = total skeleton pixel count (analogous to $n-1$ MST edges)
+    \item LongestPath$(S_k)$ = longest path in component $k$ via BFS from endpoints
+\end{itemize}
+
+\textbf{Why This Matches}:
+\begin{itemize}
+    \item The skeleton pixel count $|S|$ is analogous to MST edge count $(n-1)$: both represent the ``mass'' of the connectivity structure
+    \item Summing longest paths across components handles disconnected patterns (like MST would connect them with long edges, which wouldn't contribute to diameter)
+    \item A perfect chain: LongestPath $= |S|$ $\Rightarrow$ Stringy $\approx 1.0$
+    \item A branching tree: LongestPath $< |S|$ $\Rightarrow$ Stringy $< 1.0$
+\end{itemize}
+
+\textbf{Behavior}:
+\begin{itemize}
+    \item Chain/line: path spans all skeleton pixels $\Rightarrow$ Stringy $\approx 1.0$
+    \item Dense cluster: short path relative to skeleton mass $\Rightarrow$ Stringy $\ll 1.0$
+    \item Branching structure: path excludes branches $\Rightarrow$ moderate Stringy
+\end{itemize}
+
+\subsubsection{Sparse — \textcolor{equivalent}{Equivalent} (Updated v3)}
+
+\textbf{Graph-Theoretic}:
+\begin{equation}
+    \text{Sparse}_{\text{graph}} = 1 - \frac{A_{\alpha}}{A_{\text{hull}}}
+\end{equation}
+
+\textbf{Image-Theoretic (Updated)}:
+\begin{equation}
+    \text{Sparse}_{\text{image}} = \alpha \cdot \left(1 - \frac{|I_{\text{orig}}|}{|I_{\text{hull}}|}\right) + (1 - \alpha) \cdot \frac{|I_{\text{holes}}|}{|I_{\text{hull}}|}
+\end{equation}
+where:
+\begin{itemize}
+    \item $I_{\text{orig}}$ = original rasterized points (before morphological closing)
+    \item $I_{\text{holes}}$ = interior holes (hull pixels not in closed shape)
+    \item $\alpha = \param{0.6}$ (weight for fill-ratio term; ensures output in $[0,1]$)
+\end{itemize}
+
+\textbf{Why Normalized Weights}: Using $\alpha$ and $(1-\alpha)$ guarantees the output remains in $[0,1]$:
+\begin{itemize}
+    \item Both component terms are ratios in $[0,1]$
+    \item Convex combination preserves this range
+    \item $\alpha = 0.6$ emphasizes the fill-ratio (primary sparse signal) while still rewarding detected holes
+\end{itemize}
+
+\textbf{Why Updated}: The original formula used the closed grid, which caused shapes like rings to score low on sparse (they fill their hull well after closing). Using original points and detecting interior holes properly identifies hollow/ring shapes as sparse.
+
+\textbf{Behavior}:
+\begin{itemize}
+    \item Scattered points: low fill ratio $\Rightarrow$ high sparse
+    \item Ring shape: has interior hole $\Rightarrow$ high sparse (via hole bonus)
+    \item Dense uniform: high fill, no holes $\Rightarrow$ low sparse
+\end{itemize}
+
+\subsubsection{Convex — \textcolor{equivalent}{Equivalent}}
+
+\textbf{Core Formula (unchanged)}:
+\begin{equation}
+    \text{Convex} = \frac{|I_{\text{closed}}|}{|I_{\text{hull}}|}
+\end{equation}
+
+Uses the morphologically closed grid to measure how much of the convex hull is filled. High values indicate convex shapes; low values indicate concave shapes with indentations.
+
+\subsubsection{Skinny — \textcolor{equivalent}{Identical}}
+
+Both use the \textbf{Isoperimetric Quotient}:
+\begin{equation}
+    \text{Skinny}_{\text{raw}} = \frac{P^2}{4\pi A}
+\end{equation}
+
+A circle has $\text{Skinny}_{\text{raw}} = 1$; elongated shapes have higher values (e.g., 10:1 rectangle $\approx 3$--$5$).
+
+\textbf{Normalization for [0,1] range}:
+\begin{equation}
+    \text{Skinny} = \min\left(1, \frac{\text{Skinny}_{\text{raw}} - 1}{4}\right)
+\end{equation}
+
+This maps: circle $\to 0$, moderately elongated $\to 0.5$, highly elongated $\to 1$.
+
+\subsubsection{Clumpy — \textcolor{equivalent}{Equivalent} (Updated v4)}
+
+\textbf{Graph-Theoretic}: Ratio of MST edges shorter than $Q_1 - 1.5 \cdot \text{IQR}$ (abnormally short = tight clusters).
+\begin{equation}
+    \text{Clumpy}_{\text{graph}} = \frac{|\{e : |e| < Q_1 - 1.5 \cdot \text{IQR}\}|}{|E_{\text{MST}}|}
+\end{equation}
+This measures the \textit{fraction of unusually short edges} — a continuous value indicating how much of the MST consists of tight within-cluster connections.
+
+\textbf{Image-Theoretic (Updated)}: \textbf{Skeleton Branch Length Analysis}
+\begin{equation}
+    \text{Clumpy}_{\text{image}} = \frac{|\{b : |b| < Q_1 - 1.5 \cdot \text{IQR}\}|}{|B_S|}
+\end{equation}
+where:
+\begin{itemize}
+    \item $S$ = skeleton from Zhang-Suen thinning
+    \item $B_S$ = set of all skeleton branches (segments between junctions or endpoints)
+    \item $|b|$ = length of branch $b$ in pixels
+    \item $Q_1$, IQR computed over all branch lengths $\{|b| : b \in B_S\}$
+\end{itemize}
+
+\textbf{Algorithm}:
+\begin{enumerate}
+    \item Skeletonize the closed shape using Zhang-Suen thinning
+    \item Extract skeleton graph: identify \textbf{junctions} (pixels with $\geq 3$ neighbors) and \textbf{endpoints} (pixels with 1 neighbor)
+    \item Segment skeleton into \textbf{branches}: paths between junctions, or junction-to-endpoint, or endpoint-to-endpoint
+    \item Measure length of each branch (pixel count along path)
+    \item Apply Tukey's fence: branches shorter than $Q_1 - 1.5 \cdot \text{IQR}$ are ``short''
+    \item Clumpy = fraction of short branches
+\end{enumerate}
+
+\textbf{Why This Is Equivalent}:
+\begin{itemize}
+    \item \textbf{Skeleton branches $\approx$ MST edges}: Both represent connectivity segments
+    \item \textbf{Same statistical test}: Tukey's fence on length distribution
+    \item \textbf{Same semantic}: Short branches = tight local connections = clumpy regions
+    \item Single tight cluster: many short branches within $\Rightarrow$ HIGH clumpy (fixed!)
+\end{itemize}
+
+\textbf{Behavior}:
+\begin{itemize}
+    \item Single tight cluster: many short branches $\Rightarrow$ high clumpy
+    \item Multiple dense blobs: short branches within each $\Rightarrow$ high clumpy
+    \item Sparse scattered points: uniform branch lengths $\Rightarrow$ low clumpy
+    \item Single chain: all branches similar length $\Rightarrow$ low clumpy
+\end{itemize}
+
+\subsubsection{Outlying — \textcolor{equivalent}{Equivalent} (Updated v4)}
+
+\textbf{Graph-Theoretic}: Total length of MST edges exceeding $Q_3 + 1.5 \cdot \text{IQR}$ (outlier edges), normalized by total MST length.
+\begin{equation}
+    \text{Outlying}_{\text{graph}} = \frac{\sum_{e : |e| > Q_3 + 1.5 \cdot \text{IQR}} |e|}{\sum_{e \in E_{\text{MST}}} |e|}
+\end{equation}
+
+\textbf{Image-Theoretic (Updated)}: \textbf{Skeleton Endpoint Path Length Analysis}
+\begin{equation}
+    \text{Outlying}_{\text{image}} = \frac{\sum_{i : L_i > Q_3 + 1.5 \cdot \text{IQR}} L_i}{|S|}
+\end{equation}
+where:
+\begin{itemize}
+    \item $S$ = skeleton from Zhang-Suen thinning
+    \item Endpoints $E = \{p \in S : |\text{neighbors}(p)| = 1\}$ (degree-1 skeleton pixels)
+    \item $L_i$ = path length from endpoint $i$ to nearest junction (or other endpoint)
+    \item $Q_3$, IQR computed over all endpoint path lengths $\{L_i\}$
+    \item $|S|$ = total skeleton length (analogous to total MST length)
+\end{itemize}
+
+\textbf{Algorithm}:
+\begin{enumerate}
+    \item Skeletonize the closed shape
+    \item Find all \textbf{endpoints} (skeleton pixels with exactly 1 neighbor)
+    \item Find all \textbf{junctions} (skeleton pixels with $\geq 3$ neighbors)
+    \item For each endpoint, BFS to find path length to nearest junction (or other endpoint)
+    \item Apply Tukey's fence: paths longer than $Q_3 + 1.5 \cdot \text{IQR}$ are ``outlying''
+    \item Sum lengths of outlying paths, divide by total skeleton length
+\end{enumerate}
+
+\textbf{Why This Is Equivalent}:
+\begin{itemize}
+    \item \textbf{Endpoints = outlier attachment points}: Like MST leaves connected by potentially long edges
+    \item \textbf{Path length $\approx$ edge length}: Measures how far the outlier ``extends''
+    \item \textbf{Same normalization}: Sum of outlier lengths / total structure length
+    \item \textbf{Magnitude-based}: Captures HOW FAR outliers extend, not just count
+\end{itemize}
+
+\textbf{Behavior}:
+\begin{itemize}
+    \item Single far point with long path: HIGH outlying (long endpoint path)
+    \item Distant cluster: HIGH outlying (multiple long endpoint paths)
+    \item Compact blob: LOW outlying (short paths to all endpoints)
+    \item Chain: LOW outlying (endpoints are part of main structure)
+\end{itemize}
+
+\subsubsection{Skewed — \textcolor{equivalent}{Equivalent} (Updated v4)}
+
+\textbf{Graph-Theoretic}:
+\begin{equation}
+    \text{Skewed}_{\text{graph}} = 1 - \frac{\bar{e}}{e_{\max}}
+\end{equation}
+Measures asymmetry of \textit{MST edge length distribution}. A high value indicates many short edges with a few very long ones (e.g., tight clusters connected by long gaps).
+
+\textbf{Image-Theoretic (Updated)}: \textbf{Background Ridge Distance Analysis}
+\begin{equation}
+    \text{Skewed}_{\text{image}} = 1 - \frac{\bar{R}}{R_{\max}}
+\end{equation}
+where:
+\begin{itemize}
+    \item $D_{\text{bg}}$ = Distance Transform of the \textbf{background} (distance from background pixels to nearest foreground)
+    \item $R$ = Ridge pixels of $D_{\text{bg}}$ (local maxima = skeleton of background = Voronoi-like boundaries)
+    \item $R(p)$ = DT value at ridge pixel $p$ (half the distance between nearest foreground regions)
+    \item $\bar{R}$, $R_{\max}$ = mean and maximum ridge DT values
+\end{itemize}
+
+\textbf{Algorithm}:
+\begin{enumerate}
+    \item Compute Distance Transform of \textbf{background} pixels (invert foreground/background)
+    \item Find ridge pixels: local maxima of background DT (these trace boundaries between foreground regions)
+    \item Sample DT values along these ridges: each value represents half the ``gap'' between clusters
+    \item Compute $1 - \bar{R} / R_{\max}$
+\end{enumerate}
+
+\textbf{Why This Is Equivalent}:
+\begin{itemize}
+    \item \textbf{Background ridges $\approx$ MST long edges}: Both represent the ``gaps'' between clusters
+    \item \textbf{Ridge DT value $\approx$ edge length}: Higher DT = larger gap between foreground regions
+    \item \textbf{Same formula structure}: $1 - \text{mean}/\text{max}$
+    \item \textbf{Same semantic}: High skewed = most gaps are small, but a few are very large
+\end{itemize}
+
+\textbf{Conceptual Mapping}:
+\begin{itemize}
+    \item \textbf{MST edge} between points $\leftrightarrow$ \textbf{Background ridge} between foreground regions
+    \item \textbf{Short MST edge} (within cluster) $\leftrightarrow$ \textbf{Low ridge DT} (narrow gap)
+    \item \textbf{Long MST edge} (between clusters) $\leftrightarrow$ \textbf{High ridge DT} (wide gap)
+\end{itemize}
+
+\textbf{Behavior}:
+\begin{itemize}
+    \item Separated clusters: HIGH skewed (most ridges low, gap ridges high)
+    \item Uniform grid: LOW skewed (all ridges similar DT values)
+    \item Single blob: LOW skewed (no significant ridges in background)
+\end{itemize}
+
+\subsubsection{Striated — \textcolor{equivalent}{Equivalent} (Updated v4)}
+
+\textbf{Graph-Theoretic}: Ratio of nearly-parallel Delaunay edges (within $\pm 5°$ of each other).
+\begin{equation}
+    \text{Striated}_{\text{graph}} = \frac{|\{e : |\theta_e - \theta_{\text{dominant}}| < 5°\}|}{|E_{\text{Delaunay}}|}
+\end{equation}
+where $\theta_{\text{dominant}}$ is the most common edge angle.
+
+\textbf{Image-Theoretic (Updated)}: \textbf{Skeleton Segment Angle Concentration}
+\begin{equation}
+    \text{Striated}_{\text{image}} = \frac{|\{s : |\theta_s - \theta_{\text{dom}}| < 5°\}|}{|S_{\text{segments}}|}
+\end{equation}
+where:
+\begin{itemize}
+    \item $S$ = skeleton from Zhang-Suen thinning
+    \item $S_{\text{segments}}$ = linear segments of the skeleton (between junctions/endpoints)
+    \item $\theta_s$ = angle of segment $s$ (computed via linear regression or endpoint difference)
+    \item $\theta_{\text{dom}}$ = dominant angle (mode of angle histogram)
+\end{itemize}
+
+\textbf{Algorithm}:
+\begin{enumerate}
+    \item Skeletonize the closed shape
+    \item Extract skeleton segments (paths between junctions or endpoints)
+    \item For each segment, compute its angle $\theta_s \in [0°, 180°)$:
+        \begin{itemize}
+            \item Short segments ($<5$ pixels): angle from first to last pixel
+            \item Long segments: linear regression fit, take slope angle
+        \end{itemize}
+    \item Build angle histogram with 36 bins (5° each)
+    \item Find dominant angle $\theta_{\text{dom}}$ = bin with most segments
+    \item Striated = fraction of segments within $\pm 5°$ of $\theta_{\text{dom}}$
+\end{enumerate}
+
+\textbf{Why This Is Equivalent}:
+\begin{itemize}
+    \item \textbf{Skeleton segments $\approx$ Delaunay edges}: Both represent local connectivity directions
+    \item \textbf{Same angle tolerance}: $\pm 5°$ for ``parallel''
+    \item \textbf{Orientation-independent}: Detects striation in ANY direction (horizontal, vertical, diagonal)
+    \item \textbf{Same ratio structure}: Parallel segments / total segments
+\end{itemize}
+
+\textbf{Behavior}:
+\begin{itemize}
+    \item Horizontal bands: HIGH striated (segments mostly at 0°)
+    \item Vertical bands: HIGH striated (segments mostly at 90°)
+    \item Diagonal stripes: HIGH striated (segments mostly at 45° or 135°)
+    \item Random scatter: LOW striated (angles uniformly distributed)
+    \item Circular pattern: LOW striated (angles span full range)
+\end{itemize}
+
+\subsubsection{Monotonic — \textcolor{equivalent}{Equivalent}}
+
+Both use \textbf{Spearman rank correlation}:
+
+\textbf{Graph}: $\rho(x_{\text{coords}}, y_{\text{coords}})$ over original points.
+
+\textbf{Image}: $\rho(\text{row index}, \text{row centroid})$ — correlation between row position and the horizontal center of mass in each row.
+
+\textbf{Why Equivalent}: Both measure whether the pattern follows a monotonic trend. For rasterized data, row centroids capture the same relationship.
+
+\section{Complexity Comparison}
+
+\subsection{Notation}
+
+\begin{itemize}
+    \item $n$ = Number of data points in the scatterplot/heatmap (can range from 100s to 100,000s)
+    \item $W$ = Width of the binary grid in pixels (we use 256)
+    \item $H$ = Height of the binary grid in pixels (we use 256)
+    \item $W \times H$ = Total pixels in the grid ($256^2 = 65,536$, constant)
+    \item $r$ = Radius of structuring element for morphological operations (we use $r=3$)
+    \item $r^2$ = Area of structuring element window scanned at each pixel ($3^2 = 9$)
+    \item $b$ = Number of boundary/contour pixels (typically $b \ll n$ for dense data)
+\end{itemize}
+
+\subsection{Asymptotic Complexity}
+
+\begin{table}[h]
+\centering
+\caption{Asymptotic Complexity Comparison}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Operation} & \textbf{Graph-Theoretic} & \textbf{Image (DT+Ridge)} \\
+\midrule
+MST / Ridge Structure & $O(n^2)$ or $O(n \log n)$ & $\mathbf{O(W \cdot H)}$ \\
+Alpha Shape / Closing & $O(n \log n)$ & $O(W \cdot H \cdot r^2)$ \\
+Convex Hull & $O(n \log n)$ & $O(W \cdot H) + O(b \log b)$ \\
+\midrule
+\textbf{Total} & $O(n^2)$ or $O(n \log n)$ & $\mathbf{O(W \cdot H)}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Key insight}: For graph-theoretic methods, complexity scales with \textbf{point count} $n$. For image-theoretic methods, complexity is \textbf{constant} with respect to $n$ since it only depends on grid size $W \times H$.
+
+\section{Validation Requirements}
+
+\subsection{Empirical Validation}
+
+To confirm image-theoretic metrics have the same practical utility as graph-theoretic ones:
+
+\begin{enumerate}
+    \item \textbf{Ranking Correlation}: Compute both metric sets for 50+ heatmaps. Calculate Spearman $\rho$ between image and graph values for each metric. Target: $\rho \geq 0.7$.
+    
+    \item \textbf{Clustering Agreement}: Use each metric set to cluster heatmaps. Measure Adjusted Rand Index between clustering results.
+    
+    \item \textbf{Downstream Task Performance}: If metrics are used for anomaly detection or prediction, compare accuracy using each approach.
+\end{enumerate}
+
+\subsection{Expected Results by Metric}
+
+\begin{table}[h]
+\centering
+\caption{Expected Validation Outcomes (Updated v4)}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Metric} & \textbf{Expected $\rho$} & \textbf{Notes} \\
+\midrule
+Stringy & $> 0.85$ & Skeleton path/mass matches MST diameter/(n-1) \\
+Sparse/Convex & $> 0.85$ & Closing $\approx$ Alpha Shape \\
+Skinny & $> 0.95$ & Identical formula \\
+Clumpy & $> 0.80$ & Skeleton branch lengths $\approx$ MST edge lengths \\
+Outlying & $> 0.80$ & Endpoint path lengths $\approx$ outlier edge lengths \\
+Skewed & $> 0.80$ & Background ridges $\approx$ inter-cluster gaps \\
+Striated & $> 0.85$ & Skeleton segment angles $\approx$ Delaunay edge angles \\
+Monotonic & $> 0.85$ & Same Spearman approach \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Research Considerations}
+
+\subsection{Advantages}
+\begin{enumerate}
+    \item \textbf{Constant time complexity} with respect to point count
+    \item \textbf{GPU-friendly}: Morphological operations and distance transform parallelize naturally
+    \item \textbf{Native to heatmap domain}: No conversion to/from point clouds
+    \item \textbf{Better MST match}: Distance Transform ridges follow central paths like MST
+\end{enumerate}
+
+\subsection{Limitations to Address}
+\begin{enumerate}
+    \item \textbf{Quantization error}: Points mapping to same pixel lose distinction
+    \item \textbf{Skewed metric}: Image version measures different concept — consider renaming
+    \item \textbf{Sparse data}: Few points on large grid may produce artifacts
+\end{enumerate}
+
+\subsection{Future Work}
+
+\subsubsection{Beyond Binary: Intensity-Aware Scagnostics}
+
+Current approach uses \textbf{binary thresholding} (cell present or not). This loses intensity information:
+\begin{itemize}
+    \item Cell with value 80 and cell with value 51 are treated identically
+    \item Severity gradients are not captured
+\end{itemize}
+
+\textbf{Option A: Multi-Threshold Analysis}
+
+Compute scagnostics at multiple thresholds to generate a ``signature curve'':
+\begin{equation}
+    \text{Stringy}(t) = f(\text{threshold } t), \quad t \in \{25, 50, 75, 90\}
+\end{equation}
+
+This reveals how patterns change with severity:
+\begin{itemize}
+    \item $\text{Stringy}(t=90) = 0.95$ (isolated failures)
+    \item $\text{Stringy}(t=50) = 0.60$ (spreading damage)
+    \item $\text{Stringy}(t=25) = 0.20$ (widespread degradation)
+\end{itemize}
+
+\textbf{Complexity}: Same $O(W \times H)$ per threshold, run $k$ times.
+
+\textbf{Option B: Grayscale Morphology}
+
+Replace binary operations with grayscale morphology:
+\begin{itemize}
+    \item Grayscale dilation: $\delta_B(I)(x,y) = \max_{(i,j) \in B} I(x+i, y+j)$
+    \item Grayscale erosion: $\varepsilon_B(I)(x,y) = \min_{(i,j) \in B} I(x+i, y+j)$
+\end{itemize}
+
+This preserves full intensity information throughout the pipeline. Complexity remains $O(W \times H)$.
+
+\subsubsection{New Heatmap-Specific Metrics}
+
+Metrics unique to grid-structured visualizations:
+\begin{itemize}
+    \item \textbf{Banded}: Horizontal/vertical striping patterns (common in temporal heatmaps)
+    \item \textbf{Gradual}: Smooth gradients vs sharp boundaries (useful for diffusion patterns)
+    \item \textbf{Periodic}: Repeating patterns (e.g., seasonal cycles in temporal data)
+    \item \textbf{Asymmetric}: Left-right or top-bottom imbalance
+    \item \textbf{Peak Isolation}: Whether high-intensity regions are isolated or clustered
+\end{itemize}
+
+\subsubsection{Directional Scagnostics}
+
+Standard scagnostics treat $x$ and $y$ symmetrically. For heatmaps with semantic axes:
+\begin{itemize}
+    \item \textbf{Horizontal Stringy}: Pattern elongation along X-axis (spatial spreading)
+    \item \textbf{Vertical Stringy}: Pattern elongation along Y-axis (temporal persistence)
+    \item \textbf{Diagonal Trends}: Progressive patterns moving diagonally (spatiotemporal evolution)
+\end{itemize}
+
+\subsubsection{Multi-Domain Validation}
+
+Validate generalizability across diverse heatmap types:
+\begin{itemize}
+    \item Gene expression matrices (GEO datasets)
+    \item Climate/temperature grids (NOAA)
+    \item Web analytics heatmaps (user behavior)
+    \item Medical imaging intensity maps
+    \item Financial correlation matrices
+\end{itemize}
+
+\subsubsection{Implementation Extensions}
+\begin{itemize}
+    \item \textbf{Multi-resolution}: Compute at multiple grid sizes, aggregate results
+    \item \textbf{GPU Implementation}: CUDA/WebGL for real-time computation on large heatmap collections
+    \item \textbf{User Study}: Compare human similarity judgments with metric-based rankings
+\end{itemize}
+
+\end{document}

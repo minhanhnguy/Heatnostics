@@ -856,13 +856,34 @@ function spearmanCorrelation(x: number[], y: number[]): number {
  * @returns ScagnosticsResult with all 9 metrics in [0, 1]
  */
 export function computeScagnostics(points: Point2D[]): ScagnosticsResult {
-    // Return zeros if insufficient points (K=5 gating)
-    if (points.length < MIN_POINTS_FOR_SCAGNOSTICS) {
+    // Option C: Robust handling for sparse data
+    const n = points.length
+
+    // Case 0-1 points: No pattern possible
+    if (n < 2) {
         return {
             outlying: 0, skewed: 0, stringy: 0, sparse: 0, convex: 0,
             clumpy: 0, skinny: 0, striated: 0, monotonic: 0
         }
     }
+
+    // Case 2 points: Trivial straight line
+    if (n === 2) {
+        return {
+            outlying: 0, // No outliers in 1 edge
+            skewed: 0,   // No distribution
+            stringy: 1,  // Perfect chain
+            sparse: 0,   // No area
+            convex: 1,   // Line is convex
+            clumpy: 0,   // No clustering
+            skinny: 1,   // Infinitely thin
+            striated: 0, // Need >2 edges for parallel
+            monotonic: 1 // 2 points always monotonic
+        }
+    }
+
+    // Case 3+ points: Attempt calculation, with safeguards
+
 
     // Compute required geometric structures
     const mstEdges = computeMST(points)

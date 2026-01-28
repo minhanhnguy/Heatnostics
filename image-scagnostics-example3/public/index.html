@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline 2: Image Scagnostics Documentation</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-light: #e0e7ff;
+            --secondary: #0891b2;
+            --accent: #f59e0b;
+            --text: #1f2937;
+            --text-light: #6b7280;
+            --bg: #f9fafb;
+            --card: #ffffff;
+            --border: #e5e7eb;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background: var(--bg);
+            padding: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 2rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            border-radius: 1rem;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        .toc {
+            background: var(--card);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        .toc h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: var(--primary);
+        }
+
+        .toc ul {
+            list-style: none;
+            columns: 2;
+        }
+
+        .toc li {
+            margin-bottom: 0.5rem;
+        }
+
+        .toc a {
+            color: var(--text);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .toc a:hover {
+            color: var(--primary);
+        }
+
+        .toc .step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.5rem;
+            height: 1.5rem;
+            background: var(--primary-light);
+            color: var(--primary);
+            border-radius: 50%;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        section {
+            background: var(--card);
+            border-radius: 0.75rem;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        section h2 {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--primary-light);
+        }
+
+        section h2 .step-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.5rem;
+            height: 2.5rem;
+            background: var(--primary);
+            color: white;
+            border-radius: 50%;
+            font-size: 1rem;
+        }
+
+        section h3 {
+            font-size: 1.1rem;
+            color: var(--secondary);
+            margin: 1.5rem 0 0.75rem 0;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text);
+        }
+
+        .formula {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem 1.5rem;
+            border-radius: 0.5rem;
+            font-family: 'Courier New', monospace;
+            font-size: 1rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+        }
+
+        .formula-inline {
+            background: #f1f5f9;
+            padding: 0.125rem 0.5rem;
+            border-radius: 0.25rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .highlight {
+            background: var(--primary-light);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            border-left: 4px solid var(--primary);
+            margin: 1rem 0;
+        }
+
+        .highlight strong {
+            color: var(--primary);
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1rem;
+        }
+
+        .metric-card {
+            background: var(--bg);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            border: 1px solid var(--border);
+        }
+
+        .metric-card h4 {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .metric-card h4 .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.75rem;
+            font-weight: normal;
+        }
+
+        .metric-card .description {
+            color: var(--text-light);
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
+        }
+
+        .metric-card .formula {
+            font-size: 0.85rem;
+            margin-bottom: 0;
+        }
+
+        .badge-stringy { background: #f3e8ff; color: #7c3aed; }
+        .badge-sparse { background: #dbeafe; color: #2563eb; }
+        .badge-convex { background: #dcfce7; color: #16a34a; }
+        .badge-skinny { background: #fef9c3; color: #ca8a04; }
+        .badge-clumpy { background: #ffedd5; color: #ea580c; }
+        .badge-outlying { background: #fee2e2; color: #dc2626; }
+        .badge-skewed { background: #fce7f3; color: #db2777; }
+        .badge-striated { background: #e0e7ff; color: #4f46e5; }
+        .badge-monotonic { background: #ccfbf1; color: #0d9488; }
+
+        ul, ol {
+            margin: 1rem 0 1rem 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        .step-flow {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin: 1.5rem 0;
+        }
+
+        .step-flow .flow-item {
+            background: var(--primary-light);
+            color: var(--primary);
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .step-flow .flow-arrow {
+            color: var(--text-light);
+            font-size: 1.25rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            background: var(--bg);
+            font-weight: 600;
+        }
+
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .comparison > div {
+            padding: 1rem;
+            border-radius: 0.5rem;
+        }
+
+        .comparison .original {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+        }
+
+        .comparison .pipeline2 {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-light);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Pipeline 2: Image Scagnostics</h1>
+        <p>Subpixel / Continuous Geometry Approach for Computing Scatterplot Diagnostics</p>
+    </header>
+
+    <nav class="toc">
+        <h2>Table of Contents</h2>
+        <ul>
+            <li><a href="#overview"><span class="step-num">0</span> Overview</a></li>
+            <li><a href="#step0"><span class="step-num">0</span> Data Gallery</a></li>
+            <li><a href="#step1"><span class="step-num">1</span> Input & Smoothing</a></li>
+            <li><a href="#step2"><span class="step-num">2</span> Multi-Threshold Segmentation</a></li>
+            <li><a href="#step3"><span class="step-num">3</span> Subpixel Contour Extraction</a></li>
+            <li><a href="#step4"><span class="step-num">4</span> Distance Transform & Skeleton</a></li>
+            <li><a href="#step5"><span class="step-num">5</span> Final Scagnostics Metrics</a></li>
+            <li><a href="#metrics">All 9 Metrics Explained</a></li>
+        </ul>
+    </nav>
+
+    <section id="overview">
+        <h2>Overview: What is Pipeline 2?</h2>
+
+        <p>
+            Pipeline 2 is an <strong>image-based approach</strong> to computing scagnostics (scatterplot diagnostics)
+            that uses <strong>continuous/subpixel geometry</strong> rather than discrete pixel operations.
+        </p>
+
+        <div class="highlight">
+            <strong>Key Idea:</strong> Instead of working directly with pixels, we convert the scatterplot to a
+            continuous density field, then extract geometric features (contours, skeletons) at subpixel precision.
+            This produces more stable and accurate metrics that better match the original graph-theoretic scagnostics.
+        </div>
+
+        <h3>Pipeline Flow</h3>
+        <div class="step-flow">
+            <span class="flow-item">Raw Points</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-item">KDE Density Grid</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-item">Gaussian Blur</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-item">Multi-Threshold</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-item">Marching Squares</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-item">Skeleton + DT</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-item">9 Metrics</span>
+        </div>
+
+        <h3>Why Pipeline 2 over Pipeline 1?</h3>
+        <div class="comparison">
+            <div class="original">
+                <strong>Pipeline 1 (Morphological)</strong>
+                <ul>
+                    <li>Works on binary pixel grids</li>
+                    <li>Uses morphological operations (erosion, dilation)</li>
+                    <li>Discrete pixel counting</li>
+                    <li>Can have quantization artifacts</li>
+                </ul>
+            </div>
+            <div class="pipeline2">
+                <strong>Pipeline 2 (Continuous)</strong>
+                <ul>
+                    <li>Works on continuous density fields</li>
+                    <li>Uses marching squares for subpixel contours</li>
+                    <li>Continuous area/perimeter via calculus</li>
+                    <li>More stable and accurate</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section id="step0">
+        <h2><span class="step-badge">0</span> Data Gallery</h2>
+
+        <p>
+            The first step displays all available scatterplots organized by category. Each scatterplot is
+            converted to a small binary thumbnail for quick preview.
+        </p>
+
+        <h3>Data Format</h3>
+        <p>Each scatterplot in the dataset contains:</p>
+        <ul>
+            <li><strong>name:</strong> Identifier (e.g., "linear_positive")</li>
+            <li><strong>category:</strong> Group (e.g., "linear", "cluster", "outlier")</li>
+            <li><strong>points:</strong> Array of [x, y] coordinates normalized to [0, 1]</li>
+            <li><strong>expected_high:</strong> Which metrics should be high for this pattern</li>
+            <li><strong>expected_low:</strong> Which metrics should be low for this pattern</li>
+        </ul>
+
+        <h3>Thumbnail Generation</h3>
+        <div class="formula">
+For each point (x, y) in [0,1] range:
+    grid_x = floor(x * grid_size)
+    grid_y = floor(y * grid_size)
+    binary_grid[grid_y][grid_x] = 1
+        </div>
+    </section>
+
+    <section id="step1">
+        <h2><span class="step-badge">1</span> Input & Smoothing</h2>
+
+        <p>
+            This step converts raw points to a continuous density field using <strong>Kernel Density Estimation (KDE)</strong>,
+            then applies <strong>Gaussian blur</strong> to stabilize the field for subsequent operations.
+        </p>
+
+        <h3>Step 1a: KDE Density Estimation</h3>
+        <p>
+            Each point contributes a Gaussian "splash" to the density grid. Points that are close together
+            create higher density regions.
+        </p>
+        <div class="formula">
+density(x, y) = &Sigma; exp(-((x - pᵢ)² + (y - pᵢ)²) / (2&sigma;²))
+
+where:
+  - (pᵢ) are the input points
+  - &sigma; = bandwidth (default 3.0 pixels)
+        </div>
+
+        <h3>Step 1b: Gaussian Blur</h3>
+        <p>
+            A separable Gaussian blur smooths the density field, reducing noise and making contour extraction
+            more stable. The blur is applied in two passes (horizontal, then vertical) for efficiency.
+        </p>
+        <div class="formula">
+G(x) = (1 / &sigma;&radic;(2&pi;)) * exp(-x² / (2&sigma;²))
+
+Kernel size = ceil(3 * &sigma;) * 2 + 1
+        </div>
+
+        <div class="highlight">
+            <strong>Why blur?</strong> Without smoothing, the density field can have sharp discontinuities
+            that cause unstable contour extraction. The blur parameter &sigma; (default 1.0) controls
+            how much smoothing is applied.
+        </div>
+    </section>
+
+    <section id="step2">
+        <h2><span class="step-badge">2</span> Multi-Threshold Segmentation</h2>
+
+        <p>
+            This step creates multiple binary masks at different density thresholds, emulating
+            the family of <strong>&alpha;-shapes</strong> from the original scagnostics paper.
+        </p>
+
+        <h3>Why Multiple Thresholds?</h3>
+        <p>
+            In the original scagnostics, &alpha;-shapes at different &alpha; values capture different
+            aspects of the point distribution. Lower thresholds capture the full extent, while higher
+            thresholds capture only the dense core.
+        </p>
+
+        <table>
+            <tr>
+                <th>Percentile</th>
+                <th>What It Captures</th>
+                <th>Analogous To</th>
+            </tr>
+            <tr>
+                <td>P50 (50th)</td>
+                <td>Outer extent, includes sparse regions</td>
+                <td>Large &alpha; (loose hull)</td>
+            </tr>
+            <tr>
+                <td>P75 (75th)</td>
+                <td>Main body of the distribution</td>
+                <td>Medium &alpha; (balanced)</td>
+            </tr>
+            <tr>
+                <td>P90 (90th)</td>
+                <td>Dense regions only</td>
+                <td>Small &alpha; (tight fit)</td>
+            </tr>
+            <tr>
+                <td>P95 (95th)</td>
+                <td>Core clusters / peaks</td>
+                <td>Very small &alpha;</td>
+            </tr>
+        </table>
+
+        <h3>Threshold Computation</h3>
+        <div class="formula">
+1. Collect all non-zero density values from the grid
+2. Sort values in ascending order
+3. For percentile P:
+   threshold = values[floor(P/100 * count)]
+4. Binary mask: pixel = 1 if density >= threshold, else 0
+        </div>
+    </section>
+
+    <section id="step3">
+        <h2><span class="step-badge">3</span> Subpixel Contour Extraction</h2>
+
+        <p>
+            This is the core innovation of Pipeline 2. Instead of counting pixels, we extract
+            <strong>subpixel-accurate contours</strong> using the Marching Squares algorithm.
+        </p>
+
+        <h3>Marching Squares Algorithm</h3>
+        <p>
+            Marching Squares examines each 2x2 cell of the grid and determines how the contour
+            passes through it based on which corners are above/below the threshold.
+        </p>
+        <div class="formula">
+For each 2x2 cell with corners (a, b, c, d):
+
+    a---b      Case is determined by which corners
+    |   |      are above threshold (16 possible cases)
+    c---d
+
+Contour position is interpolated linearly:
+    t = (threshold - v0) / (v1 - v0)
+    point = p0 + t * (p1 - p0)
+        </div>
+
+        <h3>Convex Hull (Graham Scan)</h3>
+        <p>
+            The convex hull is the smallest convex polygon containing all contour points.
+            We compute it using the Graham Scan algorithm.
+        </p>
+        <div class="formula">
+1. Find lowest point (anchor)
+2. Sort other points by polar angle from anchor
+3. Process points, keeping only left turns:
+   - For each point P:
+     - While last two points and P make a right turn:
+       - Remove the middle point
+     - Add P to hull
+        </div>
+
+        <h3>Continuous Area (Shoelace Formula)</h3>
+        <p>
+            Unlike pixel counting, we compute the exact area enclosed by the contour polygon.
+        </p>
+        <div class="formula">
+Area = &frac12; |&Sigma;ᵢ (xᵢ * yᵢ₊₁ - xᵢ₊₁ * yᵢ)|
+
+This is exact for any polygon, regardless of grid resolution.
+        </div>
+
+        <h3>Continuous Perimeter</h3>
+        <div class="formula">
+Perimeter = &Sigma;ᵢ &radic;((xᵢ₊₁ - xᵢ)² + (yᵢ₊₁ - yᵢ)²)
+        </div>
+    </section>
+
+    <section id="step4">
+        <h2><span class="step-badge">4</span> Distance Transform & Skeleton</h2>
+
+        <p>
+            The skeleton (medial axis) is extracted using the <strong>Zhang-Suen thinning algorithm</strong>,
+            which iteratively removes boundary pixels while preserving topology.
+        </p>
+
+        <h3>Euclidean Distance Transform (EDT)</h3>
+        <p>
+            The EDT computes, for each pixel inside the shape, its distance to the nearest boundary.
+        </p>
+        <div class="formula">
+DT(x, y) = min distance to any background pixel
+
+Computed efficiently using two-pass algorithm:
+  Pass 1 (forward): scan top-to-bottom, left-to-right
+  Pass 2 (backward): scan bottom-to-top, right-to-left
+        </div>
+
+        <h3>Zhang-Suen Thinning</h3>
+        <p>
+            This algorithm extracts a 1-pixel-wide skeleton that preserves the shape's topology.
+        </p>
+        <div class="formula">
+Repeat until no changes:
+  Sub-iteration 1: Remove pixels satisfying conditions A
+  Sub-iteration 2: Remove pixels satisfying conditions B
+
+Conditions check:
+  - Number of neighbors (2-6)
+  - Number of 0-1 transitions around pixel
+  - Specific neighbor patterns
+        </div>
+
+        <h3>Skeleton Features</h3>
+        <ul>
+            <li><strong>Endpoints:</strong> Skeleton pixels with exactly 1 neighbor (green circles)</li>
+            <li><strong>Junctions:</strong> Skeleton pixels with 3+ neighbors (red diamonds)</li>
+            <li><strong>Branches:</strong> Paths between endpoints/junctions</li>
+        </ul>
+
+        <div class="highlight">
+            <strong>Why skeleton?</strong> The skeleton captures the "shape" of the distribution.
+            A long, thin skeleton indicates stringy data. Many junctions indicate complex, branching structure.
+        </div>
+    </section>
+
+    <section id="step5">
+        <h2><span class="step-badge">5</span> Final Scagnostics Metrics</h2>
+
+        <p>
+            The final step computes all 9 scagnostics metrics using the geometric features
+            extracted in previous steps.
+        </p>
+
+        <div class="highlight">
+            <strong>Reference:</strong> These metrics are based on Wilkinson et al. (2005)
+            "Graph-Theoretic Scagnostics" but adapted for image-based computation.
+        </div>
+    </section>
+
+    <section id="metrics">
+        <h2>All 9 Scagnostics Metrics Explained</h2>
+
+        <div class="metrics-grid">
+            <!-- Stringy -->
+            <div class="metric-card">
+                <h4>
+                    Stringy
+                    <span class="badge badge-stringy">Shape</span>
+                </h4>
+                <p class="description">
+                    Measures how chain-like or linear the data distribution is. High stringy means
+                    the points form a thin, elongated path with few branches.
+                </p>
+                <div class="formula">stringy = skeleton_length / (skeleton_length + n_junctions * k)
+
+where k = 5 (junction penalty factor)
+
+Alternative: (endpoints - 1) / max(1, junctions)
+High when: few junctions, long skeleton</div>
+            </div>
+
+            <!-- Sparse -->
+            <div class="metric-card">
+                <h4>
+                    Sparse
+                    <span class="badge badge-sparse">Density</span>
+                </h4>
+                <p class="description">
+                    Measures how scattered or spread out the points are. High sparsity means
+                    points don't fill much of the available space.
+                </p>
+                <div class="formula">sparse = 1 - (filled_area / hull_area)
+
+filled_area = continuous area from contour
+hull_area = area of convex hull
+
+High when: points are scattered, low fill ratio</div>
+            </div>
+
+            <!-- Convex -->
+            <div class="metric-card">
+                <h4>
+                    Convex
+                    <span class="badge badge-convex">Shape</span>
+                </h4>
+                <p class="description">
+                    Measures how well the shape fills its convex hull. A circle has convexity ~1,
+                    while a star shape has low convexity.
+                </p>
+                <div class="formula">convex = contour_area / hull_area
+
+contour_area = area inside the extracted contour
+hull_area = area of the convex hull
+
+High when: shape is blob-like, no concavities</div>
+            </div>
+
+            <!-- Skinny -->
+            <div class="metric-card">
+                <h4>
+                    Skinny
+                    <span class="badge badge-skinny">Shape</span>
+                </h4>
+                <p class="description">
+                    Measures elongation using the isoperimetric quotient. A circle has skinny = 0,
+                    while an elongated ellipse has high skinny.
+                </p>
+                <div class="formula">skinny = 1 - (4&pi; * area) / perimeter²
+
+This is 1 minus the "circularity" or "roundness"
+
+A circle: 4&pi;A/P² = 1, so skinny = 0
+A line: 4&pi;A/P² &rarr; 0, so skinny &rarr; 1</div>
+            </div>
+
+            <!-- Clumpy -->
+            <div class="metric-card">
+                <h4>
+                    Clumpy
+                    <span class="badge badge-clumpy">Clustering</span>
+                </h4>
+                <p class="description">
+                    Detects presence of multiple clusters. High clumpy means the data has
+                    distinct groupings rather than a single continuous distribution.
+                </p>
+                <div class="formula">clumpy = 1 - (n_components_high / n_components_low)
+
+n_components_high = connected components at P95
+n_components_low = connected components at P50
+
+High when: high threshold splits into more pieces</div>
+            </div>
+
+            <!-- Outlying -->
+            <div class="metric-card">
+                <h4>
+                    Outlying
+                    <span class="badge badge-outlying">Outliers</span>
+                </h4>
+                <p class="description">
+                    Measures presence of points far from the main distribution. Based on
+                    how much the convex hull extends beyond the core.
+                </p>
+                <div class="formula">outlying = 1 - (core_area / hull_area)
+
+core_area = area at high threshold (P90)
+hull_area = convex hull of all points
+
+High when: hull much larger than dense core</div>
+            </div>
+
+            <!-- Skewed -->
+            <div class="metric-card">
+                <h4>
+                    Skewed
+                    <span class="badge badge-skewed">Distribution</span>
+                </h4>
+                <p class="description">
+                    Measures asymmetry in the distance transform distribution. High skew
+                    indicates the shape has varying thickness.
+                </p>
+                <div class="formula">skewed = (mean_DT - median_DT) / max_DT
+
+DT = distance transform values inside shape
+
+High when: shape has uneven thickness
+(thick parts pull mean above median)</div>
+            </div>
+
+            <!-- Striated -->
+            <div class="metric-card">
+                <h4>
+                    Striated
+                    <span class="badge badge-striated">Orientation</span>
+                </h4>
+                <p class="description">
+                    Measures orientation coherence using the structure tensor. High striated
+                    means gradients in the density field are aligned (parallel lines).
+                </p>
+                <div class="formula">Structure tensor: T = [&Sigma;Ix², &Sigma;IxIy]
+                     [&Sigma;IxIy, &Sigma;Iy²]
+
+Coherence = (&lambda;1 - &lambda;2)² / (&lambda;1 + &lambda;2)²
+
+where &lambda;1, &lambda;2 are eigenvalues of T
+High when: strong directional gradient pattern</div>
+            </div>
+
+            <!-- Monotonic -->
+            <div class="metric-card">
+                <h4>
+                    Monotonic
+                    <span class="badge badge-monotonic">Trend</span>
+                </h4>
+                <p class="description">
+                    Measures linear trend using correlation of row centroids. High monotonic
+                    means there's a consistent increasing or decreasing pattern.
+                </p>
+                <div class="formula">For each row y, compute centroid:
+  centroid_x[y] = &Sigma;(x * density[y,x]) / &Sigma;density[y,x]
+
+monotonic = |correlation(y, centroid_x)|
+
+High when: centroids move consistently left/right
+as you go up/down (linear relationship)</div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>Summary: Metric Categories</h2>
+
+        <table>
+            <tr>
+                <th>Category</th>
+                <th>Metrics</th>
+                <th>What They Measure</th>
+            </tr>
+            <tr>
+                <td><strong>Shape</strong></td>
+                <td>Stringy, Convex, Skinny</td>
+                <td>Geometric properties of the distribution boundary</td>
+            </tr>
+            <tr>
+                <td><strong>Density</strong></td>
+                <td>Sparse</td>
+                <td>How spread out points are within their extent</td>
+            </tr>
+            <tr>
+                <td><strong>Clustering</strong></td>
+                <td>Clumpy</td>
+                <td>Presence of multiple distinct groups</td>
+            </tr>
+            <tr>
+                <td><strong>Outliers</strong></td>
+                <td>Outlying</td>
+                <td>Points far from the main distribution</td>
+            </tr>
+            <tr>
+                <td><strong>Distribution</strong></td>
+                <td>Skewed</td>
+                <td>Asymmetry in shape thickness</td>
+            </tr>
+            <tr>
+                <td><strong>Orientation</strong></td>
+                <td>Striated</td>
+                <td>Directional coherence / parallel structure</td>
+            </tr>
+            <tr>
+                <td><strong>Trend</strong></td>
+                <td>Monotonic</td>
+                <td>Consistent increasing/decreasing pattern</td>
+            </tr>
+        </table>
+    </section>
+
+    <section>
+        <h2>Quick Reference: Formula Summary</h2>
+
+        <div class="formula">
+SHAPE METRICS:
+  stringy  = skeleton_pixels / (skeleton_pixels + 5 * junctions)
+  convex   = contour_area / hull_area
+  skinny   = 1 - 4&pi; * area / perimeter²
+
+DENSITY:
+  sparse   = 1 - filled_area / hull_area
+
+CLUSTERING:
+  clumpy   = 1 - components_P95 / components_P50
+
+OUTLIERS:
+  outlying = 1 - core_area_P90 / hull_area
+
+DISTRIBUTION:
+  skewed   = (mean_DT - median_DT) / max_DT
+
+ORIENTATION:
+  striated = structure_tensor_coherence
+
+TREND:
+  monotonic = |correlation(row_index, row_centroid_x)|
+        </div>
+    </section>
+
+    <footer>
+        <p>
+            Pipeline 2: Image Scagnostics Documentation<br>
+            Based on "Graph-Theoretic Scagnostics" (Wilkinson et al., 2005)
+        </p>
+    </footer>
+</body>
+</html>
