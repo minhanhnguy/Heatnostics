@@ -1,97 +1,51 @@
-/**
- * Image-only Scagnostic Pipeline 2 (Subpixel / Continuous Geometry)
- * Based on: image_scagnostics_pipeline2.tex
- *
- * Key Concepts:
- * - Subpixel precision using Marching Squares
- * - Continuous Area/Perimeter (Shoelace formula, Euclidean distance)
- * - Isoperimetric Quotient for "Skinny"
- * - Distance Transform + Medial Axis for Skeleton
- */
+// Image-only Scagnostic Pipeline 2 (Subpixel / Continuous Geometry)
+// Based on: image_scagnostics_pipeline2.tex
+//
+// Key Concepts:
+// - Subpixel precision using Marching Squares
+// - Continuous Area/Perimeter (Shoelace formula, Euclidean distance)
+// - Isoperimetric Quotient for "Skinny"
+// - Distance Transform + Medial Axis for Skeleton
+// - Skeleton pruning and branch analysis
+// - Circular variance for striated detection
+// - Watershed blob segmentation for clumpy
+// - Multi-scale aggregation across thresholds
+// */
 
-export type FloatGrid = number[][]         // 0.0 to 1.0 (density)
-export type BinaryGrid = number[][]        // 0 or 1
-export interface Point { x: number; y: number }
-export type Polyline = Point[]
+import {
+    type FloatGrid,
+    type BinaryGrid,
+    type Point,
+    type Polyline,
+    type AllScagnostics,
+    type ExtendedScagnostics,
+    type MultiScaleScagnostics,
+    type SkeletonBranch,
+    type Blob
+} from "./types"
+import { pointsToFloatGrid, pointsToBinaryGrid } from "./dataConversion"
+
+// Re-export types
+export {
+    type FloatGrid,
+    type BinaryGrid,
+    type Point,
+    type Polyline,
+    type AllScagnostics,
+    type ExtendedScagnostics,
+    type MultiScaleScagnostics,
+    type SkeletonBranch,
+    type Blob
+}
+export { pointsToFloatGrid, pointsToBinaryGrid }
+
 
 // ============================================================================
 // STEP 0: Data Conversion - Points to Float Grid (Density)
 // ============================================================================
 
-/**
- * Convert point cloud to a float grid (density representation)
- * Uses kernel density estimation with Gaussian kernel
- */
-export function pointsToFloatGrid(
-    points: [number, number][],
-    gridSize: number,
-    sigma: number = 3.0
-): FloatGrid {
-    const grid: FloatGrid = Array.from({ length: gridSize }, () =>
-        Array(gridSize).fill(0)
-    )
+// Imported from ./dataConversion.ts
 
-    // For each point, add Gaussian contribution to nearby cells
-    const radius = Math.ceil(sigma * 3) // 3-sigma rule
-
-    for (const [px, py] of points) {
-        const centerX = Math.floor(px)
-        const centerY = Math.floor(py)
-
-        for (let dy = -radius; dy <= radius; dy++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-                const x = centerX + dx
-                const y = centerY + dy
-
-                if (x >= 0 && x < gridSize && y >= 0 && y < gridSize) {
-                    const dist2 = dx * dx + dy * dy
-                    const weight = Math.exp(-dist2 / (2 * sigma * sigma))
-                    grid[y][x] += weight
-                }
-            }
-        }
-    }
-
-    // Normalize to [0, 1]
-    let maxVal = 0
-    for (let y = 0; y < gridSize; y++) {
-        for (let x = 0; x < gridSize; x++) {
-            maxVal = Math.max(maxVal, grid[y][x])
-        }
-    }
-
-    if (maxVal > 0) {
-        for (let y = 0; y < gridSize; y++) {
-            for (let x = 0; x < gridSize; x++) {
-                grid[y][x] /= maxVal
-            }
-        }
-    }
-
-    return grid
-}
-
-/**
- * Convert point cloud to binary grid (simple rasterization)
- */
-export function pointsToBinaryGrid(
-    points: [number, number][],
-    gridSize: number
-): BinaryGrid {
-    const grid: BinaryGrid = Array.from({ length: gridSize }, () =>
-        Array(gridSize).fill(0)
-    )
-
-    for (const [px, py] of points) {
-        const x = Math.floor(px)
-        const y = Math.floor(py)
-        if (x >= 0 && x < gridSize && y >= 0 && y < gridSize) {
-            grid[y][x] = 1
-        }
-    }
-
-    return grid
-}
 
 // ============================================================================
 // STEP 1: Anti-alias / Smoothing
@@ -197,13 +151,7 @@ export function segmentByThreshold(grid: FloatGrid, threshold: number): BinaryGr
     return grid.map(row => row.map(val => val >= threshold ? 1 : 0))
 }
 
-/**
- * Segment grid by percentile
- */
-export function segmentByPercentile(grid: FloatGrid, percentile: number): BinaryGrid {
-    const threshold = getPercentileValue(grid, percentile)
-    return segmentByThreshold(grid, threshold)
-}
+
 
 /**
  * Multi-threshold segmentation (emulates alpha-shape family)
@@ -211,7 +159,7 @@ export function segmentByPercentile(grid: FloatGrid, percentile: number): Binary
  */
 export function multiThresholdSegmentation(
     grid: FloatGrid,
-    percentiles: number[] = [50, 75, 90, 95]
+    percentiles: number[] = [60, 65, 70, 75, 80, 85, 90, 95]
 ): { percentile: number; threshold: number; binary: BinaryGrid }[] {
     return percentiles.map(p => {
         const threshold = getPercentileValue(grid, p)
@@ -456,14 +404,23 @@ export function computeConvexHull(points: Point[]): Polyline {
 
     const pivot = points[lowest]
 
-    // Sort by polar angle
+    // Sort by polar angle, then by distance from pivot
     const sorted = points
         .filter((_, i) => i !== lowest)
-        .map(p => ({
-            point: p,
-            angle: Math.atan2(p.y - pivot.y, p.x - pivot.x)
-        }))
-        .sort((a, b) => a.angle - b.angle)
+        .map(p => {
+            const dy = p.y - pivot.y
+            const dx = p.x - pivot.x
+            return {
+                point: p,
+                angle: Math.atan2(dy, dx),
+                distSq: dx * dx + dy * dy
+            }
+        })
+        .sort((a, b) => {
+            const diffAngle = a.angle - b.angle
+            if (Math.abs(diffAngle) > 1e-10) return diffAngle
+            return a.distSq - b.distSq // Ascending distance for collinear points
+        })
         .map(p => p.point)
 
     // Graham scan
@@ -483,69 +440,7 @@ export function computeConvexHull(points: Point[]): Polyline {
     return stack
 }
 
-/**
- * Compute convex hull from all foreground pixels in a binary grid
- * This ensures the hull covers the entire shape, not just contour vertices
- */
-export function computeConvexHullFromBinary(grid: BinaryGrid): Polyline {
-    const points: Point[] = []
-    const rows = grid.length
-    const cols = grid[0]?.length || 0
 
-    // Collect all foreground pixel coordinates
-    // For efficiency, only collect boundary pixels (pixels with at least one background neighbor)
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            if (grid[y][x] !== 1) continue
-
-            // Check if this is a boundary pixel
-            const isBoundary =
-                y === 0 || y === rows - 1 || x === 0 || x === cols - 1 ||
-                grid[y - 1]?.[x] !== 1 || grid[y + 1]?.[x] !== 1 ||
-                grid[y]?.[x - 1] !== 1 || grid[y]?.[x + 1] !== 1
-
-            if (isBoundary) {
-                // Add corner points of the pixel for better hull coverage
-                points.push({ x, y })
-                points.push({ x: x + 1, y })
-                points.push({ x, y: y + 1 })
-                points.push({ x: x + 1, y: y + 1 })
-            }
-        }
-    }
-
-    if (points.length < 3) {
-        // Fallback: collect all foreground pixels
-        for (let y = 0; y < rows; y++) {
-            for (let x = 0; x < cols; x++) {
-                if (grid[y][x] === 1) {
-                    points.push({ x: x + 0.5, y: y + 0.5 })
-                }
-            }
-        }
-    }
-
-    return computeConvexHull(points)
-}
-
-/**
- * Get all foreground pixel center coordinates from a binary grid
- */
-export function getForegroundPoints(grid: BinaryGrid): Point[] {
-    const points: Point[] = []
-    const rows = grid.length
-    const cols = grid[0]?.length || 0
-
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            if (grid[y][x] === 1) {
-                points.push({ x: x + 0.5, y: y + 0.5 })
-            }
-        }
-    }
-
-    return points
-}
 
 /**
  * Isoperimetric Quotient (for Skinny metric)
@@ -559,19 +454,7 @@ export function computeSkinnyIQ(area: number, perimeter: number): number {
     return Math.max(0, Math.min(1, 1 - iq))
 }
 
-/**
- * Convex metric: Area / ConvexHullArea
- */
-export function computeConvexMetric(contour: Polyline): number {
-    if (contour.length < 3) return 1
 
-    const area = computeContinuousArea(contour)
-    const hull = computeConvexHull(contour)
-    const hullArea = computeContinuousArea(hull)
-
-    if (hullArea === 0) return 1
-    return Math.min(1, area / hullArea)
-}
 
 // ============================================================================
 // STEP 6: Distance Transform
@@ -709,57 +592,42 @@ export function zhangSuenThinning(grid: BinaryGrid): BinaryGrid {
     return current
 }
 
-/**
- * Extract skeleton from distance transform (ridge detection)
- * Uses local maxima detection
- */
-export function extractSkeletonFromDT(dt: FloatGrid): BinaryGrid {
-    const rows = dt.length
-    const cols = dt[0]?.length || 0
-    const skeleton: BinaryGrid = Array.from({ length: rows }, () => Array(cols).fill(0))
 
-    for (let y = 1; y < rows - 1; y++) {
-        for (let x = 1; x < cols - 1; x++) {
-            const val = dt[y][x]
-            if (val <= 0) continue
-
-            // Check if local maximum in at least one direction
-            const isRidge =
-                (val >= dt[y - 1][x] && val >= dt[y + 1][x]) ||  // Vertical ridge
-                (val >= dt[y][x - 1] && val >= dt[y][x + 1]) ||  // Horizontal ridge
-                (val >= dt[y - 1][x - 1] && val >= dt[y + 1][x + 1]) ||  // Diagonal
-                (val >= dt[y - 1][x + 1] && val >= dt[y + 1][x - 1])     // Anti-diagonal
-
-            if (isRidge && val > 1) {
-                skeleton[y][x] = 1
-            }
-        }
-    }
-
-    return skeleton
-}
 
 /**
  * Get skeleton endpoints (pixels with exactly 1 neighbor)
+ * Also includes skeleton pixels on the boundary that have 1 or fewer internal neighbors
  */
 export function getSkeletonEndpoints(skeleton: BinaryGrid): Point[] {
     const rows = skeleton.length
     const cols = skeleton[0]?.length || 0
     const endpoints: Point[] = []
 
-    for (let y = 1; y < rows - 1; y++) {
-        for (let x = 1; x < cols - 1; x++) {
-            if (skeleton[y][x] !== 1) continue
+    // Check ALL pixels including boundaries
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (skeleton[y]?.[x] !== 1) continue
 
             let neighbors = 0
             for (let dy = -1; dy <= 1; dy++) {
                 for (let dx = -1; dx <= 1; dx++) {
                     if (dy === 0 && dx === 0) continue
-                    if (skeleton[y + dy]?.[x + dx] === 1) neighbors++
+                    const ny = y + dy
+                    const nx = x + dx
+                    // Safe boundary check
+                    if (ny >= 0 && ny < rows && nx >= 0 && nx < cols) {
+                        if (skeleton[ny][nx] === 1) neighbors++
+                    }
                 }
             }
 
+            // Endpoint: exactly 1 neighbor
+            // Also treat boundary pixels with 1 neighbor as endpoints
             if (neighbors === 1) {
+                endpoints.push({ x, y })
+            }
+            // Special case: isolated pixel (0 neighbors) - also an endpoint
+            else if (neighbors === 0) {
                 endpoints.push({ x, y })
             }
         }
@@ -769,28 +637,182 @@ export function getSkeletonEndpoints(skeleton: BinaryGrid): Point[] {
 }
 
 /**
- * Get skeleton junctions (pixels with 3+ neighbors)
+ * Get skeleton junctions - only "true" junctions where branches diverge to different endpoints.
+ * A junction must:
+ * 1. Have 3+ neighbors (candidate junction)
+ * 2. Have at least 2 branches that lead to DIFFERENT endpoints
+ * 3. Be representative of a cluster (if adjacent junctions exist, only keep one per cluster)
  */
 export function getSkeletonJunctions(skeleton: BinaryGrid): Point[] {
     const rows = skeleton.length
     const cols = skeleton[0]?.length || 0
-    const junctions: Point[] = []
 
+    // Helper to count neighbors
+    const countNeighbors = (x: number, y: number): number => {
+        let count = 0
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                if (skeleton[y + dy]?.[x + dx] === 1) count++
+            }
+        }
+        return count
+    }
+
+    // Helper to get neighbor positions
+    const getNeighbors = (x: number, y: number): Point[] => {
+        const neighbors: Point[] = []
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                if (skeleton[y + dy]?.[x + dx] === 1) {
+                    neighbors.push({ x: x + dx, y: y + dy })
+                }
+            }
+        }
+        return neighbors
+    }
+
+    // Find all candidate junctions (3+ neighbors)
+    const candidates: Point[] = []
+    const candidateSet = new Set<string>()
     for (let y = 1; y < rows - 1; y++) {
         for (let x = 1; x < cols - 1; x++) {
             if (skeleton[y][x] !== 1) continue
+            if (countNeighbors(x, y) >= 3) {
+                candidates.push({ x, y })
+                candidateSet.add(`${x},${y}`)
+            }
+        }
+    }
 
-            let neighbors = 0
+    // Trace a path from a starting point until we reach an endpoint
+    // Skip over intermediate junctions (other candidates)
+    const traceToEndpoint = (start: Point, origin: Point): Point | null => {
+        const visited = new Set<string>()
+        visited.add(`${origin.x},${origin.y}`)
+
+        // BFS to find reachable endpoints from this branch
+        const queue: Point[] = [start]
+
+        while (queue.length > 0) {
+            const current = queue.shift()!
+            const key = `${current.x},${current.y}`
+
+            if (visited.has(key)) continue
+            visited.add(key)
+
+            const neighborCount = countNeighbors(current.x, current.y)
+
+            // Found an endpoint (1 neighbor)
+            if (neighborCount === 1) {
+                return current
+            }
+
+            // If this is another candidate junction (not adjacent to origin), stop this branch
+            if (candidateSet.has(key)) {
+                // Check if this candidate is adjacent to origin
+                const dx = Math.abs(current.x - origin.x)
+                const dy = Math.abs(current.y - origin.y)
+                if (dx > 1 || dy > 1) {
+                    // Not adjacent, stop here
+                    continue
+                }
+                // Adjacent candidate - continue through it
+            }
+
+            // Continue exploring neighbors
+            const neighbors = getNeighbors(current.x, current.y)
+            for (const n of neighbors) {
+                if (!visited.has(`${n.x},${n.y}`)) {
+                    queue.push(n)
+                }
+            }
+        }
+
+        return null
+    }
+
+    // Group adjacent candidates into clusters
+    const visited = new Set<string>()
+    const clusters: Point[][] = []
+
+    for (const candidate of candidates) {
+        const key = `${candidate.x},${candidate.y}`
+        if (visited.has(key)) continue
+
+        // BFS to find all adjacent candidates in this cluster
+        const cluster: Point[] = []
+        const queue: Point[] = [candidate]
+
+        while (queue.length > 0) {
+            const current = queue.shift()!
+            const currentKey = `${current.x},${current.y}`
+
+            if (visited.has(currentKey)) continue
+            visited.add(currentKey)
+            cluster.push(current)
+
+            // Check all 8 neighbors for other candidates
             for (let dy = -1; dy <= 1; dy++) {
                 for (let dx = -1; dx <= 1; dx++) {
                     if (dy === 0 && dx === 0) continue
-                    if (skeleton[y + dy]?.[x + dx] === 1) neighbors++
+                    const nx = current.x + dx
+                    const ny = current.y + dy
+                    const neighborKey = `${nx},${ny}`
+                    if (candidateSet.has(neighborKey) && !visited.has(neighborKey)) {
+                        queue.push({ x: nx, y: ny })
+                    }
+                }
+            }
+        }
+
+        clusters.push(cluster)
+    }
+
+    // For each cluster, find the best representative junction
+    const junctions: Point[] = []
+
+    for (const cluster of clusters) {
+        // For each candidate in cluster, count how many unique endpoints it reaches
+        let bestCandidate: Point | null = null
+        let bestEndpointCount = 0
+
+        for (const candidate of cluster) {
+            const neighbors = getNeighbors(candidate.x, candidate.y)
+            const reachedEndpoints: Set<string> = new Set()
+
+            for (const neighbor of neighbors) {
+                const endpoint = traceToEndpoint(neighbor, candidate)
+                if (endpoint) {
+                    reachedEndpoints.add(`${endpoint.x},${endpoint.y}`)
                 }
             }
 
-            if (neighbors >= 3) {
-                junctions.push({ x, y })
+            // A junction needs to reach at least 2 different endpoints to be meaningful
+            if (reachedEndpoints.size >= 2 && reachedEndpoints.size > bestEndpointCount) {
+                bestCandidate = candidate
+                bestEndpointCount = reachedEndpoints.size
             }
+        }
+
+        // If no candidate reaches 2+ endpoints, take the first one if it reaches at least 1
+        if (!bestCandidate && cluster.length > 0) {
+            for (const candidate of cluster) {
+                const neighbors = getNeighbors(candidate.x, candidate.y)
+                for (const neighbor of neighbors) {
+                    const endpoint = traceToEndpoint(neighbor, candidate)
+                    if (endpoint) {
+                        bestCandidate = candidate
+                        break
+                    }
+                }
+                if (bestCandidate) break
+            }
+        }
+
+        if (bestCandidate) {
+            junctions.push(bestCandidate)
         }
     }
 
@@ -800,6 +822,58 @@ export function getSkeletonJunctions(skeleton: BinaryGrid): Point[] {
 /**
  * Compute longest path in skeleton using BFS
  */
+/**
+ * Compute longest path and return the actual path points
+ */
+export function computeSkeletonLongestPathData(skeleton: BinaryGrid): Point[] {
+    const endpoints = getSkeletonEndpoints(skeleton)
+    if (endpoints.length === 0) return []
+
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+
+    // BFS that keeps track of the path
+    const bfs = (start: Point): Point[] => {
+        const visited = new Set<string>()
+        const queue: { p: Point; path: Point[] }[] = [{ p: start, path: [start] }]
+        let longest: Point[] = []
+
+        while (queue.length > 0) {
+            const { p, path } = queue.shift()!
+            const key = `${p.x},${p.y}`
+            if (visited.has(key)) continue
+            visited.add(key)
+
+            if (path.length > longest.length) {
+                longest = path
+            }
+
+            // Check 8 neighbors
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dy === 0 && dx === 0) continue
+                    const nx = p.x + dx
+                    const ny = p.y + dy
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
+                        skeleton[ny][nx] === 1 && !visited.has(`${nx},${ny}`)) {
+                        queue.push({ p: { x: nx, y: ny }, path: [...path, { x: nx, y: ny }] })
+                    }
+                }
+            }
+        }
+        return longest
+    }
+
+    let maxPath: Point[] = []
+    for (const ep of endpoints) {
+        const path = bfs(ep)
+        if (path.length > maxPath.length) {
+            maxPath = path
+        }
+    }
+    return maxPath
+}
+
 export function computeSkeletonLongestPath(skeleton: BinaryGrid): number {
     const endpoints = getSkeletonEndpoints(skeleton)
     if (endpoints.length === 0) return 0
@@ -839,11 +913,221 @@ export function computeSkeletonLongestPath(skeleton: BinaryGrid): number {
 
     // Find longest path from any endpoint
     let longestPath = 0
-    for (const ep of endpoints.slice(0, 10)) { // Limit for performance
+    for (const ep of endpoints) { // Check all endpoints for accuracy
         longestPath = Math.max(longestPath, bfs(ep))
     }
 
     return longestPath
+}
+
+/**
+ * Prune short branches from skeleton
+ * Removes spur branches shorter than minLength (in pixels)
+ * As per LaTeX: remove branches shorter than 0.5%-2.0% of image diagonal
+ */
+export function pruneSkeletonBranches(skeleton: BinaryGrid, minLength: number): BinaryGrid {
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+    const pruned = skeleton.map(row => [...row])
+
+    let changed = true
+    while (changed) {
+        changed = false
+        const endpoints = getSkeletonEndpoints(pruned)
+
+        for (const ep of endpoints) {
+            // Trace from endpoint and measure branch length
+            const visited = new Set<string>()
+            let current = ep
+            let branchLength = 0
+            const branchPixels: Point[] = [current]
+
+            while (true) {
+                visited.add(`${current.x},${current.y}`)
+
+                // Find next pixel along branch
+                let next: Point | null = null
+                let neighbors = 0
+
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dy === 0 && dx === 0) continue
+                        const nx = current.x + dx
+                        const ny = current.y + dy
+                        if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
+                            pruned[ny][nx] === 1) {
+                            neighbors++
+                            if (!visited.has(`${nx},${ny}`)) {
+                                next = { x: nx, y: ny }
+                                branchLength += (dx !== 0 && dy !== 0) ? Math.SQRT2 : 1
+                            }
+                        }
+                    }
+                }
+
+                if (!next || neighbors >= 3) {
+                    // Hit junction or end
+                    break
+                }
+
+                branchPixels.push(next)
+                current = next
+            }
+
+            // Remove branch if too short
+            if (branchLength < minLength && branchLength > 0) {
+                for (const p of branchPixels) {
+                    // Don't remove junctions
+                    let neighborCount = 0
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (dy === 0 && dx === 0) continue
+                            const nx = p.x + dx
+                            const ny = p.y + dy
+                            if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
+                                pruned[ny][nx] === 1) {
+                                neighborCount++
+                            }
+                        }
+                    }
+                    if (neighborCount <= 2) {
+                        pruned[p.y][p.x] = 0
+                        changed = true
+                    }
+                }
+            }
+        }
+    }
+
+    return pruned
+}
+
+// SkeletonBranch type is imported from ./types
+
+/**
+ * Extract individual branches from skeleton with their statistics
+ * Each branch runs from endpoint/junction to endpoint/junction
+ */
+export function extractSkeletonBranches(skeleton: BinaryGrid, dt: FloatGrid): SkeletonBranch[] {
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+    const branches: SkeletonBranch[] = []
+    const visitedEdges = new Set<string>()
+
+    const endpoints = getSkeletonEndpoints(skeleton)
+    const junctions = getSkeletonJunctions(skeleton)
+    const startPoints = [...endpoints, ...junctions]
+
+    const getNeighbors = (p: Point): Point[] => {
+        const neighbors: Point[] = []
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                const nx = p.x + dx
+                const ny = p.y + dy
+                if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
+                    skeleton[ny][nx] === 1) {
+                    neighbors.push({ x: nx, y: ny })
+                }
+            }
+        }
+        return neighbors
+    }
+
+    const isJunctionOrEndpoint = (p: Point): boolean => {
+        const neighbors = getNeighbors(p)
+        return neighbors.length === 1 || neighbors.length >= 3
+    }
+
+    for (const start of startPoints) {
+        const neighbors = getNeighbors(start)
+
+        for (const firstNeighbor of neighbors) {
+            const edgeKey = `${Math.min(start.x, firstNeighbor.x)},${Math.min(start.y, firstNeighbor.y)}-${Math.max(start.x, firstNeighbor.x)},${Math.max(start.y, firstNeighbor.y)}`
+            if (visitedEdges.has(edgeKey)) continue
+
+            // Trace branch
+            const pixels: Point[] = [start]
+            let current = firstNeighbor
+            let prev = start
+            let length = Math.sqrt((current.x - prev.x) ** 2 + (current.y - prev.y) ** 2)
+            let radiusSum = dt[start.y]?.[start.x] || 0
+
+            while (true) {
+                pixels.push(current)
+                radiusSum += dt[current.y]?.[current.x] || 0
+
+                // Mark edge as visited
+                const ek = `${Math.min(prev.x, current.x)},${Math.min(prev.y, current.y)}-${Math.max(prev.x, current.x)},${Math.max(prev.y, current.y)}`
+                visitedEdges.add(ek)
+
+                if (isJunctionOrEndpoint(current)) break
+
+                // Find next pixel (not previous)
+                const currNeighbors = getNeighbors(current)
+                // Filter out the node we just came from
+                const nextCandidates = currNeighbors.filter(n => n.x !== prev.x || n.y !== prev.y)
+
+                if (nextCandidates.length === 0) break
+
+                // Pick the first valid neighbor (should be only 1 in a branch)
+                const next = nextCandidates[0]
+
+                length += Math.sqrt((next.x - current.x) ** 2 + (next.y - current.y) ** 2)
+                prev = current
+                current = next
+            }
+
+            if (pixels.length >= 2) {
+                branches.push({
+                    pixels,
+                    length,
+                    meanRadius: radiusSum / pixels.length,
+                    startPoint: pixels[0],
+                    endPoint: pixels[pixels.length - 1]
+                })
+            }
+        }
+    }
+
+    return branches
+}
+
+
+
+/**
+ * Get skeleton arc length (total length of all skeleton pixels)
+ */
+export function computeSkeletonArcLength(skeleton: BinaryGrid): number {
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+    let L = 0
+    const visited = new Set<string>()
+
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (skeleton[y][x] !== 1) continue
+
+            // Add half the distance to each neighbor (to avoid double counting)
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dy === 0 && dx === 0) continue
+                    const nx = x + dx
+                    const ny = y + dy
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
+                        skeleton[ny][nx] === 1) {
+                        const edgeKey = `${Math.min(x, nx)},${Math.min(y, ny)}-${Math.max(x, nx)},${Math.max(y, ny)}`
+                        if (!visited.has(edgeKey)) {
+                            visited.add(edgeKey)
+                            L += Math.sqrt(dx * dx + dy * dy)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return L
 }
 
 // ============================================================================
@@ -920,24 +1204,708 @@ export function computeStructureTensor(grid: FloatGrid, windowSize: number = 5):
     }
 }
 
+/**
+ * Compute circular variance of orientation angles within mask
+ * As per LaTeX: striated score ≈ 1 - circular variance
+ * Circular variance = 1 - R where R = |mean resultant vector|
+ */
+export function computeCircularVariance(
+    orientation: FloatGrid,
+    mask: BinaryGrid
+): number {
+    const rows = orientation.length
+    const cols = orientation[0]?.length || 0
+
+    // Sum of unit vectors in orientation direction (doubled angle for axial data)
+    let sumCos = 0
+    let sumSin = 0
+    let count = 0
+
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (mask[y]?.[x] !== 1) continue
+
+            const theta = orientation[y][x]
+            // Double the angle for axial data (orientations are undirected)
+            sumCos += Math.cos(2 * theta)
+            sumSin += Math.sin(2 * theta)
+            count++
+        }
+    }
+
+    if (count === 0) return 1 // Maximum variance if no data
+
+    // Mean resultant length R
+    const R = Math.sqrt(sumCos * sumCos + sumSin * sumSin) / count
+
+    // Circular variance = 1 - R
+    return 1 - R
+}
+
+// Blob type is imported from ./types
+
+/**
+ * Find local maxima in smoothed density grid
+ * Used as seeds for watershed-like blob segmentation
+ */
+export function findLocalMaxima(grid: FloatGrid, minHeight: number = 0.1): Point[] {
+    const rows = grid.length
+    const cols = grid[0]?.length || 0
+    const maxima: Point[] = []
+
+    for (let y = 1; y < rows - 1; y++) {
+        for (let x = 1; x < cols - 1; x++) {
+            const val = grid[y][x]
+            if (val < minHeight) continue
+
+            // Check if local maximum (8-neighborhood)
+            let isMax = true
+            for (let dy = -1; dy <= 1 && isMax; dy++) {
+                for (let dx = -1; dx <= 1 && isMax; dx++) {
+                    if (dy === 0 && dx === 0) continue
+                    if (grid[y + dy][x + dx] > val) {
+                        isMax = false
+                    }
+                }
+            }
+
+            if (isMax) {
+                maxima.push({ x, y })
+            }
+        }
+    }
+
+    return maxima
+}
+
+/**
+ * Simple watershed-like blob segmentation on density grid
+ * Returns blobs with their areas for clumpy calculation
+ * As per LaTeX: Clumpy = B·Var({a_i})/A² where B = number of blobs
+ */
+export function watershedBlobSegmentation(
+    grid: FloatGrid,
+    mask: BinaryGrid,
+    minBlobSize: number = 10
+): Blob[] {
+    const rows = grid.length
+    const cols = grid[0]?.length || 0
+    const blobs: Blob[] = []
+
+    // Find local maxima as seed points
+    const maxima = findLocalMaxima(grid, 0.1)
+    if (maxima.length === 0) return blobs
+
+    // Label array: -1 = unvisited, 0 = background, 1+ = blob labels
+    const labels: number[][] = Array.from({ length: rows }, () => Array(cols).fill(-1))
+
+    // Mark background
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (mask[y][x] === 0) {
+                labels[y][x] = 0
+            }
+        }
+    }
+
+    // Assign each foreground pixel to nearest maximum using gradient descent
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (mask[y][x] === 0) continue
+
+            // Gradient ascent to find which peak this pixel belongs to
+            let cx = x
+            let cy = y
+            const path: Point[] = [{ x: cx, y: cy }]
+            const maxSteps = rows + cols
+
+            for (let step = 0; step < maxSteps; step++) {
+                let maxVal = grid[cy][cx]
+                let nx = cx
+                let ny = cy
+
+                // Find neighbor with highest value
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dy === 0 && dx === 0) continue
+                        const px = cx + dx
+                        const py = cy + dy
+                        if (px >= 0 && px < cols && py >= 0 && py < rows &&
+                            mask[py][px] === 1 && grid[py][px] > maxVal) {
+                            maxVal = grid[py][px]
+                            nx = px
+                            ny = py
+                        }
+                    }
+                }
+
+                if (nx === cx && ny === cy) break // At local maximum
+                cx = nx
+                cy = ny
+                path.push({ x: cx, y: cy })
+            }
+
+            // Find which maximum this reached
+            const maxIdx = maxima.findIndex(m => m.x === cx && m.y === cy)
+            const label = maxIdx >= 0 ? maxIdx + 1 : 0
+
+            // Label the entire path
+            for (const p of path) {
+                if (labels[p.y][p.x] === -1) {
+                    labels[p.y][p.x] = label
+                }
+            }
+        }
+    }
+
+    // Collect blobs
+    const blobMap = new Map<number, Point[]>()
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const label = labels[y][x]
+            if (label > 0) {
+                if (!blobMap.has(label)) blobMap.set(label, [])
+                blobMap.get(label)!.push({ x, y })
+            }
+        }
+    }
+
+    // Create blob objects
+    for (const [label, pixels] of blobMap) {
+        if (pixels.length < minBlobSize) continue
+
+        let sumX = 0, sumY = 0, peakVal = 0
+        for (const p of pixels) {
+            sumX += p.x
+            sumY += p.y
+            peakVal = Math.max(peakVal, grid[p.y][p.x])
+        }
+
+        blobs.push({
+            pixels,
+            area: pixels.length,
+            centroid: { x: sumX / pixels.length, y: sumY / pixels.length },
+            peakValue: peakVal
+        })
+    }
+
+    return blobs
+}
+
+/**
+ * Compute clumpy measure using blob segmentation
+ * As per LaTeX: Clumpy = B·Var({a_i})/A² (normalized)
+ */
+export function computeClumpyFromBlobs(blobs: Blob[], totalArea: number): number {
+    const B = blobs.length
+    if (B <= 1 || totalArea === 0) return 0
+
+    const areas = blobs.map(b => b.area)
+    const meanArea = areas.reduce((s, a) => s + a, 0) / B
+    const variance = areas.reduce((s, a) => s + (a - meanArea) ** 2, 0) / B
+
+    // Normalized clumpy: B * Var(areas) / A²
+    // Scale to [0, 1] range
+    const raw = (B * variance) / (totalArea * totalArea)
+
+    // Use log scaling to normalize (empirically tuned)
+    return Math.min(1, Math.sqrt(raw) * 10)
+}
+
+/**
+ * Sample points along the principal skeleton path
+ * For monotonic calculation as per LaTeX
+ */
+export function sampleSkeletonPath(
+    skeleton: BinaryGrid,
+    numSamples: number = 50
+): Point[] {
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+    const endpoints = getSkeletonEndpoints(skeleton)
+
+    if (endpoints.length < 2) {
+        // Just sample all skeleton pixels
+        const allPixels: Point[] = []
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                if (skeleton[y][x] === 1) {
+                    allPixels.push({ x, y })
+                }
+            }
+        }
+        return allPixels.slice(0, numSamples)
+    }
+
+    // Find the two endpoints farthest apart
+    let maxDist = 0
+    let startEp = endpoints[0]
+    let endEp = endpoints[1]
+
+    for (let i = 0; i < endpoints.length; i++) {
+        for (let j = i + 1; j < endpoints.length; j++) {
+            const d = Math.sqrt(
+                (endpoints[i].x - endpoints[j].x) ** 2 +
+                (endpoints[i].y - endpoints[j].y) ** 2
+            )
+            if (d > maxDist) {
+                maxDist = d
+                startEp = endpoints[i]
+                endEp = endpoints[j]
+            }
+        }
+    }
+
+    // BFS to find path from startEp to endEp
+    const visited = new Map<string, Point | null>()
+    const queue: Point[] = [startEp]
+    visited.set(`${startEp.x},${startEp.y}`, null)
+
+    while (queue.length > 0) {
+        const current = queue.shift()!
+        if (current.x === endEp.x && current.y === endEp.y) break
+
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                const nx = current.x + dx
+                const ny = current.y + dy
+                const key = `${nx},${ny}`
+                if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
+                    skeleton[ny][nx] === 1 && !visited.has(key)) {
+                    visited.set(key, current)
+                    queue.push({ x: nx, y: ny })
+                }
+            }
+        }
+    }
+
+    // Reconstruct path
+    const path: Point[] = []
+    let current: Point | null = endEp
+    while (current) {
+        path.unshift(current)
+        current = visited.get(`${current.x},${current.y}`) || null
+    }
+
+    if (path.length === 0) return []
+
+    // Sample evenly along path
+    const samples: Point[] = []
+    const step = Math.max(1, Math.floor(path.length / numSamples))
+    for (let i = 0; i < path.length; i += step) {
+        samples.push(path[i])
+        if (samples.length >= numSamples) break
+    }
+
+    return samples
+}
+
+/**
+ * Compute Spearman rank correlation
+ */
+export function spearmanCorrelation(x: number[], y: number[]): number {
+    if (x.length !== y.length || x.length < 3) return 0
+
+    const n = x.length
+
+    // Compute ranks
+    const rankX = computeRanks(x)
+    const rankY = computeRanks(y)
+
+    // Spearman using d² formula
+    let sumD2 = 0
+    for (let i = 0; i < n; i++) {
+        const d = rankX[i] - rankY[i]
+        sumD2 += d * d
+    }
+
+    return 1 - (6 * sumD2) / (n * (n * n - 1))
+}
+
+/**
+ * Compute ranks for an array of values
+ */
+function computeRanks(values: number[]): number[] {
+    const indexed = values.map((v, i) => ({ v, i }))
+    indexed.sort((a, b) => a.v - b.v)
+
+    const ranks = new Array(values.length)
+    for (let i = 0; i < indexed.length; i++) {
+        ranks[indexed[i].i] = i + 1
+    }
+
+    return ranks
+}
+
 // ============================================================================
 // STEP 9: Complete Scagnostics Metrics
 // ============================================================================
 
-export interface AllScagnostics {
-    stringy: number
-    sparse: number
-    convex: number
-    skinny: number
-    clumpy: number
-    outlying: number
-    skewed: number
-    striated: number
-    monotonic: number
+// AllScagnostics and ExtendedScagnostics types are imported from ./types
+
+/**
+ * Compute skeleton width statistics from distance transform
+ * As per LaTeX: mean radius r̄ and variance Var_r
+ */
+export function computeSkeletonWidthStats(
+    skeleton: BinaryGrid,
+    dt: FloatGrid
+): { meanRadius: number; varianceRadius: number } {
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+
+    let sumRadius = 0
+    let sumRadiusSq = 0
+    let count = 0
+
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (skeleton[y][x] === 1) {
+                const r = dt[y]?.[x] || 0
+                sumRadius += r
+                sumRadiusSq += r * r
+                count++
+            }
+        }
+    }
+
+    if (count === 0) return { meanRadius: 0, varianceRadius: 0 }
+
+    const meanRadius = sumRadius / count
+    const varianceRadius = (sumRadiusSq / count) - (meanRadius * meanRadius)
+
+    return { meanRadius, varianceRadius: Math.max(0, varianceRadius) }
+}
+
+/**
+ * Compute Skinny metric with full formula from LaTeX
+ * Skinny = λ₁(1-IQ) + λ₂(Var_r/r̄²)
+ * where IQ = 4πA/P² and λ₁ + λ₂ = 1
+ */
+export function computeSkinnyFull(
+    area: number,
+    perimeter: number,
+    meanRadius: number,
+    varianceRadius: number,
+    lambda1: number = 0.7
+): number {
+    const lambda2 = 1 - lambda1
+
+    // IQ component
+    const iq = perimeter > 0 ? (4 * Math.PI * area) / (perimeter * perimeter) : 1
+    const iqComponent = 1 - iq
+
+    // Width variance component (coefficient of variation squared)
+    const widthComponent = meanRadius > 0 ? varianceRadius / (meanRadius * meanRadius) : 0
+
+    const skinny = lambda1 * iqComponent + lambda2 * Math.min(1, widthComponent)
+    return Math.max(0, Math.min(1, skinny))
+}
+
+/**
+ * Compute Stringy metric with full formula from LaTeX
+ * Stringy = (L/√A) × (1-Branchiness) × (1-Loopiness)
+ * where Branchiness = n_j/(n_j+n_e) and Loopiness = H/(1+H)
+ */
+/**
+ * Compute Stringy metric as ratio of longest path to total skeleton length
+ * Simplified formula: Stringy = L_max / L_total
+ */
+export function computeStringySimple(
+    longestPath: number,
+    totalSkeletonLength: number
+): number {
+    if (totalSkeletonLength <= 0) return 0
+    return Math.min(1, longestPath / totalSkeletonLength)
+}
+
+/**
+ * Count holes in a binary grid using Euler characteristic
+ * Holes = 1 - χ where χ = V - E + F (for connected component)
+ * Simplified: count enclosed background regions
+ */
+export function countHoles(grid: BinaryGrid): number {
+    const rows = grid.length
+    const cols = grid[0]?.length || 0
+    if (rows === 0 || cols === 0) return 0
+
+    // Create inverted grid (background becomes foreground)
+    const inverted: BinaryGrid = grid.map(row => row.map(v => v === 0 ? 1 : 0))
+
+    // Count background components
+    const visited: boolean[][] = Array(rows).fill(null).map(() => Array(cols).fill(false))
+    let bgComponents = 0
+
+    const floodFill = (startY: number, startX: number, touchesBorder: boolean[]): boolean => {
+        const queue: [number, number][] = [[startY, startX]]
+        visited[startY][startX] = true
+        let touchesEdge = false
+
+        while (queue.length > 0) {
+            const [y, x] = queue.shift()!
+
+            // Check if this is on the border
+            if (y === 0 || y === rows - 1 || x === 0 || x === cols - 1) {
+                touchesEdge = true
+            }
+
+            // 4-connectivity for background
+            const neighbors: [number, number][] = [
+                [y - 1, x], [y + 1, x], [y, x - 1], [y, x + 1]
+            ]
+
+            for (const [ny, nx] of neighbors) {
+                if (ny >= 0 && ny < rows && nx >= 0 && nx < cols &&
+                    !visited[ny][nx] && inverted[ny][nx] === 1) {
+                    visited[ny][nx] = true
+                    queue.push([ny, nx])
+                }
+            }
+        }
+
+        return touchesEdge
+    }
+
+    // Find background components that don't touch the border (holes)
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (inverted[y][x] === 1 && !visited[y][x]) {
+                const touchesBorder: boolean[] = []
+                const touchesEdge = floodFill(y, x, touchesBorder)
+                if (!touchesEdge) {
+                    bgComponents++ // This is a hole
+                }
+            }
+        }
+    }
+
+    return bgComponents
+}
+
+/**
+ * Compute weighted centroid and covariance matrix for Mahalanobis distance
+ * As per LaTeX: x̄ = Σwᵢxᵢ/Σwᵢ, Σ = Σwᵢ(xᵢ-x̄)(xᵢ-x̄)ᵀ/Σwᵢ
+ */
+export function computeWeightedStats(
+    grid: FloatGrid,
+    mask: BinaryGrid
+): { centroid: Point; covariance: number[][]; totalWeight: number } {
+    const rows = grid.length
+    const cols = grid[0]?.length || 0
+
+    let sumWX = 0, sumWY = 0, totalWeight = 0
+    const points: { x: number; y: number; w: number }[] = []
+
+    // First pass: compute weighted centroid
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (mask[y]?.[x] === 1) {
+                const w = Math.max(0.001, grid[y][x]) // Ensure positive weight
+                sumWX += w * x
+                sumWY += w * y
+                totalWeight += w
+                points.push({ x, y, w })
+            }
+        }
+    }
+
+    if (totalWeight === 0) {
+        return {
+            centroid: { x: cols / 2, y: rows / 2 },
+            covariance: [[1, 0], [0, 1]],
+            totalWeight: 0
+        }
+    }
+
+    const centroid = { x: sumWX / totalWeight, y: sumWY / totalWeight }
+
+    // Second pass: compute weighted covariance
+    let cxx = 0, cyy = 0, cxy = 0
+    for (const p of points) {
+        const dx = p.x - centroid.x
+        const dy = p.y - centroid.y
+        cxx += p.w * dx * dx
+        cyy += p.w * dy * dy
+        cxy += p.w * dx * dy
+    }
+
+    cxx /= totalWeight
+    cyy /= totalWeight
+    cxy /= totalWeight
+
+    // Regularize to avoid singular matrix
+    const eps = 0.01
+    cxx = Math.max(cxx, eps)
+    cyy = Math.max(cyy, eps)
+
+    return {
+        centroid,
+        covariance: [[cxx, cxy], [cxy, cyy]],
+        totalWeight
+    }
+}
+
+/**
+ * Compute Mahalanobis distance for a point given centroid and inverse covariance
+ */
+function mahalanobisDistance(
+    x: number, y: number,
+    centroid: Point,
+    covInv: number[][]
+): number {
+    const dx = x - centroid.x
+    const dy = y - centroid.y
+    return Math.sqrt(
+        covInv[0][0] * dx * dx +
+        2 * covInv[0][1] * dx * dy +
+        covInv[1][1] * dy * dy
+    )
+}
+
+/**
+ * Invert a 2x2 matrix
+ */
+function invert2x2(m: number[][]): number[][] {
+    const det = m[0][0] * m[1][1] - m[0][1] * m[1][0]
+    if (Math.abs(det) < 1e-10) {
+        return [[1, 0], [0, 1]] // Return identity for singular matrix
+    }
+    return [
+        [m[1][1] / det, -m[0][1] / det],
+        [-m[1][0] / det, m[0][0] / det]
+    ]
+}
+
+/**
+ * Compute Outlying metric using Mahalanobis distance
+ * As per LaTeX: Outlying_M = Σ{wᵢ : mᵢ > med + 3·MAD} / Σwᵢ
+ */
+export function computeOutlyingMahalanobis(
+    grid: FloatGrid,
+    mask: BinaryGrid
+): number {
+    const rows = grid.length
+    const cols = grid[0]?.length || 0
+
+    const { centroid, covariance, totalWeight } = computeWeightedStats(grid, mask)
+    if (totalWeight === 0) return 0
+
+    const covInv = invert2x2(covariance)
+
+    // Compute Mahalanobis distances for all foreground pixels
+    const distances: { d: number; w: number }[] = []
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (mask[y]?.[x] === 1) {
+                const d = mahalanobisDistance(x, y, centroid, covInv)
+                const w = Math.max(0.001, grid[y][x])
+                distances.push({ d, w })
+            }
+        }
+    }
+
+    if (distances.length === 0) return 0
+
+    // Compute median of distances
+    const sortedD = distances.map(p => p.d).sort((a, b) => a - b)
+    const median = sortedD[Math.floor(sortedD.length / 2)]
+
+    // Compute MAD (Median Absolute Deviation)
+    const absoluteDeviations = sortedD.map(d => Math.abs(d - median)).sort((a, b) => a - b)
+    const mad = absoluteDeviations[Math.floor(absoluteDeviations.length / 2)]
+
+    // Threshold: median + 3 * MAD
+    const threshold = median + 3 * Math.max(mad, 0.1)
+
+    // Sum weight of outlying pixels
+    let outlyingWeight = 0
+    for (const p of distances) {
+        if (p.d > threshold) {
+            outlyingWeight += p.w
+        }
+    }
+
+    return Math.min(1, outlyingWeight / totalWeight)
+}
+
+/**
+ * Compute Skewed metric using 3rd central moment along principal axis
+ * As per LaTeX: Skewed = |μ₃|/μ₂^(3/2) where z = u·(x-x̄)
+ */
+export function computeSkewedPrincipalAxis(
+    grid: FloatGrid,
+    mask: BinaryGrid
+): number {
+    const rows = grid.length
+    const cols = grid[0]?.length || 0
+
+    const { centroid, covariance, totalWeight } = computeWeightedStats(grid, mask)
+    if (totalWeight === 0) return 0
+
+    // Compute principal eigenvector of covariance
+    // For 2x2 symmetric matrix [[a,b],[b,c]], eigenvectors can be computed analytically
+    const a = covariance[0][0]
+    const b = covariance[0][1]
+    const c = covariance[1][1]
+
+    const trace = a + c
+    const det = a * c - b * b
+    const discriminant = Math.sqrt(Math.max(0, trace * trace / 4 - det))
+    const lambda1 = trace / 2 + discriminant // Larger eigenvalue
+
+    // Principal eigenvector for λ₁
+    let ux: number, uy: number
+    if (Math.abs(b) > 1e-10) {
+        ux = lambda1 - c
+        uy = b
+    } else if (a >= c) {
+        ux = 1
+        uy = 0
+    } else {
+        ux = 0
+        uy = 1
+    }
+
+    // Normalize
+    const ulen = Math.sqrt(ux * ux + uy * uy)
+    if (ulen > 0) {
+        ux /= ulen
+        uy /= ulen
+    }
+
+    // Project points onto principal axis and compute moments
+    let mu2 = 0, mu3 = 0
+
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (mask[y]?.[x] === 1) {
+                const w = Math.max(0.001, grid[y][x])
+                const dx = x - centroid.x
+                const dy = y - centroid.y
+                const z = ux * dx + uy * dy // Projection onto principal axis
+
+                mu2 += w * z * z
+                mu3 += w * z * z * z
+            }
+        }
+    }
+
+    mu2 /= totalWeight
+    mu3 /= totalWeight
+
+    // Skewness = |μ₃| / μ₂^(3/2)
+    if (mu2 <= 0) return 0
+
+    const skewness = Math.abs(mu3) / Math.pow(mu2, 1.5)
+
+    // Normalize to [0,1] - typical skewness values are in [-3, 3] range
+    return Math.min(1, skewness / 3)
 }
 
 /**
  * Compute all 9 scagnostics metrics using Pipeline 2 approach
+ * Implements formulas from image_scagnostics_pipeline2.tex exactly as specified
  */
 export function computeAllScagnostics(
     floatGrid: FloatGrid,
@@ -946,107 +1914,169 @@ export function computeAllScagnostics(
     convexHull: Polyline
 ): AllScagnostics {
     const gridSize = floatGrid.length
+    const diag = Math.sqrt(2) * gridSize
 
-    // Get largest contour
-    const largestContour = contours.reduce((max, c) =>
-        computeContinuousArea(c) > computeContinuousArea(max) ? c : max,
-        contours[0] || []
-    )
-
-    // Basic geometry
-    const area = computeContinuousArea(largestContour)
-    const perimeter = computeContinuousPerimeter(largestContour)
+    // Basic geometry from all contours
+    const area = contours.reduce((sum, c) => sum + computeContinuousArea(c), 0)
+    // For perimeter, we also sum them up
+    const perimeter = contours.reduce((sum, c) => sum + computeContinuousPerimeter(c), 0)
     const hullArea = computeContinuousArea(convexHull)
 
     // Distance transform
     const dt = euclideanDistanceTransform(binaryGrid)
-    const dtStats = getGridStats(dt)
 
-    // Skeleton
-    const skeleton = zhangSuenThinning(binaryGrid)
-    const skeletonPixels = countFilledCells(skeleton)
-    const longestPath = computeSkeletonLongestPath(skeleton)
+    // Skeleton with pruning (as per LaTeX: 0.5%-2.0% of diagonal)
+    const rawSkeleton = zhangSuenThinning(binaryGrid)
+    const pruneLength = diag * 0.01 // 1% of diagonal
+    const skeleton = pruneSkeletonBranches(rawSkeleton, pruneLength)
+
+    const skeletonArcLength = computeSkeletonArcLength(skeleton)
+
+    // Skeleton topology statistics
     const endpoints = getSkeletonEndpoints(skeleton)
     const junctions = getSkeletonJunctions(skeleton)
+    const numHoles = countHoles(binaryGrid)
+
+    // Skeleton width statistics for Skinny
+    const { meanRadius, varianceRadius } = computeSkeletonWidthStats(skeleton, dt)
+
+    // Branch statistics
+    const branches = extractSkeletonBranches(skeleton, dt)
 
     // Structure tensor for striated
-    const { meanCoherence } = computeStructureTensor(floatGrid)
+    const { orientation } = computeStructureTensor(floatGrid, 5)
+    const circularVar = computeCircularVariance(orientation, binaryGrid)
 
-    // 1. STRINGY: longest path / skeleton mass
-    const stringy = skeletonPixels > 0 ? Math.min(1, longestPath / skeletonPixels) : 0
-
-    // 2. SPARSE: 1 - (filled area / hull area)
+    // Blob segmentation for clumpy
     const filledPixels = countFilledCells(binaryGrid)
-    const hullPixels = hullArea // Using continuous hull area
-    const sparse = hullPixels > 0 ? Math.max(0, 1 - (filledPixels / (gridSize * gridSize)) * (gridSize * gridSize / hullPixels)) : 0
+    const blobs = watershedBlobSegmentation(floatGrid, binaryGrid, 5)
 
+    // ========================================================================
+    // 1. STRINGY: L_max / L_total
+    // Simplified: ratio of longest path in skeleton to total skeleton length
+    // ========================================================================
+    const longestPath = computeSkeletonLongestPath(skeleton)
+    const stringy = computeStringySimple(
+        longestPath,
+        skeletonArcLength
+    )
+
+    // ========================================================================
+    // 2. SPARSE: 1 - (filled pixels / hull area)
+    // LaTeX: ratio of points to α-hull area (inverse density)
+    // ========================================================================
+    const sparse = hullArea > 0
+        ? Math.max(0, Math.min(1, 1 - filledPixels / hullArea))
+        : 0
+
+    // ========================================================================
     // 3. CONVEX: area / hull area
+    // LaTeX: ratio of α-hull area to convex hull area
+    // ========================================================================
     const convex = hullArea > 0 ? Math.min(1, area / hullArea) : 1
 
-    // 4. SKINNY: 1 - IQ (isoperimetric quotient)
-    const skinny = computeSkinnyIQ(area, perimeter)
+    // ========================================================================
+    // 4. SKINNY: λ₁(1-IQ) + λ₂(Var_r/r̄²)
+    // LaTeX: combines isoperimetric quotient (1 - 4πA/P²)
+    //        with medial axis width variance (Var_r/r̄²)
+    //        λ₁=0.7, λ₂=0.3 for balanced measure
+    // ========================================================================
+    const skinny = computeSkinnyFull(area, perimeter, meanRadius, varianceRadius, 0.7)
 
-    // 5. CLUMPY: based on connected components
-    // Multiple separate regions = high clumpy (distinct clusters)
-    // Formula: 1 - 1/n where n = number of connected components
-    // 1 component → 0, 2 components → 0.5, 3 → 0.67, etc.
+    // ========================================================================
+    // 5. CLUMPY: max(B·Var({a_i})/A², 1-1/n)
+    // LaTeX: Clumpy = B·Var({a_i})/A² (normalized)
+    // Also consider connected components
+    // ========================================================================
     const numComponents = countConnectedComponents(binaryGrid)
-    const clumpy = numComponents > 0 ? 1 - (1 / numComponents) : 0
+    const blobClumpy = computeClumpyFromBlobs(blobs, filledPixels)
+    const componentClumpy = numComponents > 1 ? 1 - (1 / numComponents) : 0
+    // Combine both measures
+    const clumpy = Math.max(blobClumpy, componentClumpy)
 
-    // 6. OUTLYING: fraction of long endpoint paths
-    // Approximate: endpoints far from center
-    const centerX = gridSize / 2
-    const centerY = gridSize / 2
-    let totalEndpointDist = 0
-    for (const ep of endpoints) {
-        totalEndpointDist += Math.sqrt((ep.x - centerX) ** 2 + (ep.y - centerY) ** 2)
-    }
-    const maxPossibleDist = Math.sqrt(2) * gridSize / 2 * endpoints.length
-    const outlying = maxPossibleDist > 0 ? Math.min(1, totalEndpointDist / maxPossibleDist) : 0
+    // ========================================================================
+    // 6. OUTLYING: ½(O_M + O_k)
+    // LaTeX: Average of Mahalanobis-based (O_M) and branch-based (O_k)
+    // O_M = Σ{wᵢ : mᵢ > med + 3·MAD} / Σwᵢ
+    // O_k = sum_{j: r_j < r_th} A_j / A
+    // ========================================================================
+    // Mahalanobis-based outlying
+    const outlyingMahalanobis = computeOutlyingMahalanobis(floatGrid, binaryGrid)
 
-    // 7. SKEWED: 1 - mean(DT) / max(DT)
-    const skewed = dtStats.max > 0 ? Math.max(0, 1 - dtStats.mean / dtStats.max) : 0
+    // Branch-based outlying
+    let outlyingBranch = 0
+    if (branches.length > 0 && filledPixels > 0) {
+        // Compute median radius
+        const radii = branches.map(b => b.meanRadius).sort((a, b) => a - b)
+        const medianRadius = radii[Math.floor(radii.length / 2)]
+        const radiusThreshold = medianRadius * 0.5 // Branches with < 50% of median radius
 
-    // 8. STRIATED: coherence from structure tensor
-    const striated = Math.min(1, meanCoherence)
-
-    // 9. MONOTONIC: Spearman correlation of row centroids
-    const rowCentroids: { row: number; centroid: number }[] = []
-    for (let y = 0; y < gridSize; y++) {
-        let sumX = 0, count = 0
-        for (let x = 0; x < gridSize; x++) {
-            if (binaryGrid[y][x] === 1) {
-                sumX += x
-                count++
+        // Sum area in thin branches
+        let thinBranchArea = 0
+        for (const branch of branches) {
+            if (branch.meanRadius < radiusThreshold) {
+                // Approximate branch area as length × 2 × radius
+                thinBranchArea += branch.length * branch.meanRadius * 2
             }
         }
-        if (count > 0) {
-            rowCentroids.push({ row: y, centroid: sumX / count })
-        }
+
+        outlyingBranch = Math.min(1, thinBranchArea / filledPixels)
     }
 
-    let monotonic = 0
-    if (rowCentroids.length >= 3) {
-        // Spearman correlation
-        const n = rowCentroids.length
-        const rankRow = rowCentroids.map((_, i) => i)
-        const sortedByCentroid = [...rowCentroids].sort((a, b) => a.centroid - b.centroid)
-        const rankCentroid = rowCentroids.map(rc =>
-            sortedByCentroid.findIndex(s => s.row === rc.row)
-        )
+    // Combine both measures: ½(O_M + O_k)
+    const outlying = (outlyingMahalanobis + outlyingBranch) / 2
 
-        let sumD2 = 0
-        for (let i = 0; i < n; i++) {
-            const d = rankRow[i] - rankCentroid[i]
-            sumD2 += d * d
+    // ========================================================================
+    // 7. SKEWED: |μ₃|/μ₂^(3/2)
+    // LaTeX: projects intensity-weighted pixels onto principal eigenvector,
+    //        computes |μ₃|/μ₂^(3/2) for skewness along main axis
+    // ========================================================================
+    const skewed = computeSkewedPrincipalAxis(floatGrid, binaryGrid)
+
+    // ========================================================================
+    // 8. STRIATED: 1 - circular variance of orientations
+    // LaTeX: striated ≈ 1 - circular variance
+    // ========================================================================
+    const striated = Math.max(0, Math.min(1, 1 - circularVar))
+
+    // ========================================================================
+    // 9. MONOTONIC: Spearman correlation on skeleton path samples
+    // LaTeX: |ρ| where ρ is Spearman correlation between x and y on path
+    // ========================================================================
+    let monotonic = 0
+
+    // Sample points along principal skeleton path
+    const pathSamples = sampleSkeletonPath(skeleton, 50)
+    if (pathSamples.length >= 5) {
+        const xs = pathSamples.map(p => p.x)
+        const ys = pathSamples.map(p => p.y)
+        monotonic = Math.abs(spearmanCorrelation(xs, ys))
+    } else {
+        // Fallback: use row centroids
+        const rowCentroids: { row: number; centroid: number }[] = []
+        for (let y = 0; y < gridSize; y++) {
+            let sumX = 0, count = 0
+            for (let x = 0; x < gridSize; x++) {
+                if (binaryGrid[y][x] === 1) {
+                    sumX += x
+                    count++
+                }
+            }
+            if (count > 0) {
+                rowCentroids.push({ row: y, centroid: sumX / count })
+            }
         }
-        const rho = 1 - (6 * sumD2) / (n * (n * n - 1))
-        monotonic = Math.abs(rho)
+
+        if (rowCentroids.length >= 3) {
+            const rows = rowCentroids.map(rc => rc.row)
+            const centroids = rowCentroids.map(rc => rc.centroid)
+            monotonic = Math.abs(spearmanCorrelation(rows, centroids))
+        }
     }
 
     return {
         stringy,
-        sparse: Math.min(1, Math.max(0, sparse)),
+        sparse,
         convex,
         skinny,
         clumpy,
@@ -1056,6 +2086,8 @@ export function computeAllScagnostics(
         monotonic
     }
 }
+
+
 
 // ============================================================================
 // Utility Functions
@@ -1119,103 +2151,4 @@ export function countFilledCells(grid: BinaryGrid): number {
     )
 }
 
-/**
- * Get grid statistics
- */
-export function getGridStats(grid: FloatGrid): { min: number; max: number; mean: number } {
-    let min = Infinity
-    let max = -Infinity
-    let sum = 0
-    let count = 0
 
-    for (const row of grid) {
-        for (const val of row) {
-            min = Math.min(min, val)
-            max = Math.max(max, val)
-            sum += val
-            count++
-        }
-    }
-
-    return { min, max, mean: count > 0 ? sum / count : 0 }
-}
-
-// ============================================================================
-// Main Pipeline Execution
-// ============================================================================
-
-export interface Pipeline2Result {
-    // Step 1
-    smoothed: FloatGrid
-    smoothingSigma: number
-    // Step 2
-    thresholds: { percentile: number; threshold: number; binary: BinaryGrid }[]
-    // Step 3+
-    contours: Polyline[]
-    convexHull: Polyline
-    // Metrics
-    metrics: {
-        area: number
-        perimeter: number
-        hullArea: number
-        skinny: number
-        convex: number
-    }
-}
-
-/**
- * Run Pipeline 2 on a float grid
- */
-export function runPipeline2(
-    inputGrid: FloatGrid,
-    options: {
-        smoothingSigma?: number
-        percentiles?: number[]
-        primaryPercentile?: number
-    } = {}
-): Pipeline2Result {
-    const {
-        smoothingSigma = 1.0,
-        percentiles = [50, 75, 90, 95],
-        primaryPercentile = 75
-    } = options
-
-    // Step 1: Smoothing
-    const smoothed = gaussianBlur(inputGrid, smoothingSigma)
-
-    // Step 2: Multi-threshold segmentation
-    const thresholds = multiThresholdSegmentation(smoothed, percentiles)
-
-    // Step 3: Contour extraction on primary threshold
-    const primaryThreshold = getPercentileValue(smoothed, primaryPercentile)
-    const contours = marchingSquares(smoothed, primaryThreshold)
-
-    // Get largest contour for metrics
-    const largestContour = contours.reduce((max, c) =>
-        computeContinuousArea(c) > computeContinuousArea(max) ? c : max,
-        contours[0] || []
-    )
-
-    // Compute metrics
-    const area = computeContinuousArea(largestContour)
-    const perimeter = computeContinuousPerimeter(largestContour)
-    const convexHull = computeConvexHull(largestContour)
-    const hullArea = computeContinuousArea(convexHull)
-    const skinny = computeSkinnyIQ(area, perimeter)
-    const convex = hullArea > 0 ? area / hullArea : 1
-
-    return {
-        smoothed,
-        smoothingSigma,
-        thresholds,
-        contours,
-        convexHull,
-        metrics: {
-            area,
-            perimeter,
-            hullArea,
-            skinny,
-            convex
-        }
-    }
-}

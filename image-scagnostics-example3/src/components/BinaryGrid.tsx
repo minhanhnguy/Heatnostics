@@ -2,8 +2,10 @@
 
 import { useEffect, useRef } from "react"
 
+import type { BinaryGrid } from "@/lib/types"
+
 interface BinaryGridProps {
-    grid: number[][]  // 2D array of 0s and 1s
+    grid: BinaryGrid  // 2D array of 0s and 1s
     size: number      // Grid dimension (e.g., 256)
 }
 

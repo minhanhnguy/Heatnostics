@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, memo } from "react"
 
+import type { BinaryGrid } from "@/lib/types"
+
 interface MiniGridProps {
-    grid: number[][]
+    grid: BinaryGrid
     size: number
 }
 

@@ -1,17 +1,18 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import type { Point } from "@/lib/pipeline2"
+import type { Point, FloatGrid, BinaryGrid } from "@/lib/types"
 
 interface SkeletonCanvasProps {
-    dtGrid: number[][]           // Distance transform (float)
-    skeleton: number[][]         // Skeleton (binary)
+    dtGrid: FloatGrid           // Distance transform (float)
+    skeleton: BinaryGrid         // Skeleton (binary)
     endpoints?: Point[]          // Skeleton endpoints
     junctions?: Point[]          // Skeleton junctions
     gridSize: number
     showSkeleton?: boolean
     showEndpoints?: boolean
     showJunctions?: boolean
+    longestPathPoints?: Point[]
     label?: string
 }
 
@@ -32,6 +33,7 @@ export default function SkeletonCanvas({
     showSkeleton = true,
     showEndpoints = true,
     showJunctions = true,
+    longestPathPoints = [],
     label
 }: SkeletonCanvasProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -99,43 +101,48 @@ export default function SkeletonCanvas({
             ctx.drawImage(offscreen, 0, 0, displaySize, displaySize)
         }
 
-        // Draw endpoints (green circles)
-        if (showEndpoints && endpoints.length > 0) {
-            ctx.fillStyle = "#22c55e"
-            ctx.strokeStyle = "#ffffff"
-            ctx.lineWidth = 1
+        // Draw longest path (Blue line)
+        if (longestPathPoints && longestPathPoints.length > 0) {
+            ctx.strokeStyle = "#3b82f6" // Blue-500
+            ctx.lineWidth = 2
+            ctx.lineJoin = "round"
+            ctx.beginPath()
 
-            for (const ep of endpoints) {
-                ctx.beginPath()
-                ctx.arc(ep.x * scale, ep.y * scale, 3.5, 0, Math.PI * 2)
-                ctx.fill()
-                ctx.stroke()
-            }
+            longestPathPoints.forEach((p, i) => {
+                const x = p.x * scale
+                const y = p.y * scale
+                if (i === 0) ctx.moveTo(x, y)
+                else ctx.lineTo(x, y)
+            })
+            ctx.stroke()
         }
 
-        // Draw junctions (red diamonds)
+        // Draw junctions (red pixels)
         if (showJunctions && junctions.length > 0) {
-            ctx.fillStyle = "#ef4444"
-            ctx.strokeStyle = "#ffffff"
-            ctx.lineWidth = 1
+            ctx.fillStyle = "#ff0000"
 
             for (const jp of junctions) {
-                const x = jp.x * scale
-                const y = jp.y * scale
-                const size = 4
-
-                ctx.beginPath()
-                ctx.moveTo(x, y - size)
-                ctx.lineTo(x + size, y)
-                ctx.lineTo(x, y + size)
-                ctx.lineTo(x - size, y)
-                ctx.closePath()
-                ctx.fill()
-                ctx.stroke()
+                ctx.fillRect(
+                    Math.floor(jp.x * scale),
+                    Math.floor(jp.y * scale),
+                    Math.ceil(scale),
+                    Math.ceil(scale)
+                )
             }
         }
 
-    }, [dtGrid, skeleton, endpoints, junctions, gridSize, showSkeleton, showEndpoints, showJunctions])
+        // Draw endpoints (cyan pixels)
+        if (showEndpoints && endpoints.length > 0) {
+            ctx.fillStyle = "#00fc43"
+
+            for (const ep of endpoints) {
+                const x = ep.x * scale
+                const y = ep.y * scale
+                ctx.fillRect(x - 2, y - 2, 4, 4)
+            }
+        }
+
+    }, [dtGrid, skeleton, endpoints, junctions, gridSize, showSkeleton, showEndpoints, showJunctions, longestPathPoints])
 
     return (
         <div ref={containerRef} className="w-full h-full flex flex-col items-center justify-center">

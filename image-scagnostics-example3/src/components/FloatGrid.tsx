@@ -2,8 +2,10 @@
 
 import { useEffect, useRef } from "react"
 
+import type { FloatGrid } from "@/lib/types"
+
 interface FloatGridProps {
-    grid: number[][]  // 2D array of floats [0, 1]
+    grid: FloatGrid  // 2D array of floats [0, 1]
     colorMap?: "grayscale" | "viridis" | "plasma" | "heat"
     showStats?: boolean
     label?: string

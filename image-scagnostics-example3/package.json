@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "d3-contour": "^4.0.2",
+    "d3-polygon": "^3.0.1",
     "katex": "^0.16.28",
     "next": "16.1.6",
     "react": "19.2.3",
@@ -16,6 +18,8 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/d3-contour": "^3.0.6",
+    "@types/d3-polygon": "^3.0.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

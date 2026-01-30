@@ -1,12 +1,10 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import type { Point } from "@/lib/pipeline2"
-
-type Polyline = Point[]
+import type { Point, FloatGrid, Polyline } from "@/lib/types"
 
 interface ContourCanvasProps {
-    grid: number[][]           // Background grid (float or binary)
+    grid: FloatGrid           // Background grid (float or binary)
     contours: Polyline[]       // Marching squares contours
     convexHull?: Polyline      // Optional convex hull overlay
     gridSize: number
