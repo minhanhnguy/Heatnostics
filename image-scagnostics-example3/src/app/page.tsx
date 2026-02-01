@@ -98,7 +98,7 @@ function Equation({ formula, label }: { formula: string; label?: string }) {
 // Constants
 // ============================================================================
 
-const PRIMARY_PERCENTILE = 50
+const PRIMARY_PERCENTILE = 60
 
 // ============================================================================
 // Step Components (Academic Style)
@@ -807,7 +807,7 @@ export default function Pipeline2Page() {
         const smoothed = gaussianBlur(original, smoothingSigma)
 
         // Thresholding
-        const thresholds = multiThresholdSegmentation(smoothed, [50, 75, 90, 95])
+        const thresholds = multiThresholdSegmentation(smoothed, [60, 70, 80, 90])
         const binary = thresholds.find(t => t.percentile === PRIMARY_PERCENTILE)?.binary
         if (!binary) continue
 
@@ -905,7 +905,7 @@ export default function Pipeline2Page() {
 
   const thresholds = useMemo(() => {
     if (!smoothedGrid.length) return []
-    return multiThresholdSegmentation(smoothedGrid, [50, 75, 90, 95])
+    return multiThresholdSegmentation(smoothedGrid, [60, 70, 80, 90])
   }, [smoothedGrid])
 
   const contourData = useMemo(() => {
@@ -933,7 +933,7 @@ export default function Pipeline2Page() {
         perimeter,
         hullArea,
         convex: hullArea > 0 ? area / hullArea : 1,
-        skinny: perimeter > 0 ? Math.max(0, 1 - (4 * Math.PI * area) / (perimeter * perimeter)) : 0
+        skinny: perimeter > 0 ? Math.max(0, 1 - Math.sqrt(4 * Math.PI * area) / perimeter) : 0
       }
     }
   }, [smoothedGrid, thresholds])
