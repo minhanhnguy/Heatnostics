@@ -39,6 +39,8 @@ export {
 }
 export { pointsToFloatGrid, pointsToBinaryGrid }
 
+// Note: SkeletonTopology is exported where it's defined (with analyzeSkeletonTopology)
+
 
 // ============================================================================
 // STEP 0: Data Conversion - Points to Float Grid (Density)
@@ -1005,8 +1007,519 @@ export function pruneSkeletonBranches(skeleton: BinaryGrid, minLength: number): 
 // SkeletonBranch type is imported from ./types
 
 /**
+ * Unified skeleton topology analysis
+ * Returns consistent endpoints, junctions, and branches that all agree with each other
+ *
+ * TRUE JUNCTION DEFINITION:
+ * A junction is a point where the skeleton ACTUALLY DIVERGES to reach DIFFERENT endpoints.
+ * - Must have 3+ neighbors (candidate)
+ * - Must have branches leading to at least 2 DIFFERENT endpoints
+ * - Branches must be meaningful (length > MIN_BRANCH_LENGTH pixels)
+ *
+ * This filters out:
+ * - Artifacts from thinning (3 neighbors but not a real branch point)
+ * - Tiny spurs that don't represent real structure
+ * - "Junctions" where all paths lead to the same endpoint
+ */
+export interface SkeletonTopology {
+    endpoints: Point[]           // Pixels with 1 neighbor (branch tips)
+    junctions: Point[]           // Raw pixels with 3+ neighbors
+    branches: SkeletonBranch[]   // Paths between nodes
+    displayJunctions: Point[]    // TRUE junctions (actually diverge to different endpoints)
+    loopTops: Point[]            // Top points of detected loops (farthest from connection points)
+    loopCount: number            // Number of detected loops
+}
+
+// Minimum branch length to be considered meaningful (in pixels)
+const MIN_BRANCH_LENGTH = 3
+
+export function analyzeSkeletonTopology(skeleton: BinaryGrid, dt: FloatGrid): SkeletonTopology {
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+
+    // Helper to count neighbors
+    const countNeighbors = (x: number, y: number): number => {
+        let count = 0
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                const ny = y + dy
+                const nx = x + dx
+                if (ny >= 0 && ny < rows && nx >= 0 && nx < cols) {
+                    if (skeleton[ny][nx] === 1) count++
+                }
+            }
+        }
+        return count
+    }
+
+    // Helper to get neighbor positions
+    const getNeighbors = (x: number, y: number): Point[] => {
+        const neighbors: Point[] = []
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                const ny = y + dy
+                const nx = x + dx
+                if (ny >= 0 && ny < rows && nx >= 0 && nx < cols) {
+                    if (skeleton[ny][nx] === 1) {
+                        neighbors.push({ x: nx, y: ny })
+                    }
+                }
+            }
+        }
+        return neighbors
+    }
+
+    // Step 1: Find ALL endpoints (1 neighbor) and ALL candidate junctions (3+ neighbors)
+    const endpoints: Point[] = []
+    const endpointSet = new Set<string>()
+    const candidateJunctions: Point[] = []
+    const candidateSet = new Set<string>()
+
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if (skeleton[y]?.[x] !== 1) continue
+
+            const neighbors = countNeighbors(x, y)
+
+            if (neighbors <= 1) {
+                endpoints.push({ x, y })
+                endpointSet.add(`${x},${y}`)
+            } else if (neighbors >= 3) {
+                candidateJunctions.push({ x, y })
+                candidateSet.add(`${x},${y}`)
+            }
+        }
+    }
+
+    // Step 2: For each candidate junction, trace branches and find which endpoints they reach
+    // A TRUE junction must have branches reaching at least 2 DIFFERENT endpoints
+
+    /**
+     * Trace from a starting point (adjacent to candidate) until we reach an endpoint
+     * Returns: { endpoint: the endpoint reached (or null), length: path length }
+     */
+    const traceBranchToEndpoint = (
+        start: Point,
+        origin: Point
+    ): { endpoint: Point | null; length: number } => {
+        const visited = new Set<string>()
+        visited.add(`${origin.x},${origin.y}`)
+
+        let current = start
+        let prev = origin
+        let length = Math.sqrt((current.x - prev.x) ** 2 + (current.y - prev.y) ** 2)
+
+        const maxIterations = rows * cols
+        let iterations = 0
+
+        while (iterations < maxIterations) {
+            iterations++
+            const currentKey = `${current.x},${current.y}`
+
+            if (visited.has(currentKey)) break
+            visited.add(currentKey)
+
+            // Check if we reached an endpoint
+            if (endpointSet.has(currentKey)) {
+                return { endpoint: current, length }
+            }
+
+            // Check if we hit another candidate junction
+            // If so, continue through it (we want to find the ultimate endpoint)
+
+            // Find next pixel
+            const neighbors = getNeighbors(current.x, current.y)
+            const nextCandidates = neighbors.filter(n =>
+                !visited.has(`${n.x},${n.y}`) &&
+                (n.x !== prev.x || n.y !== prev.y)
+            )
+
+            if (nextCandidates.length === 0) {
+                // Dead end - might be at image boundary or disconnected
+                // Check if current has only 1 neighbor (it's effectively an endpoint)
+                const neighborCount = countNeighbors(current.x, current.y)
+                if (neighborCount <= 1) {
+                    return { endpoint: current, length }
+                }
+                break
+            }
+
+            // Continue along the path
+            const next = nextCandidates[0]
+            length += Math.sqrt((next.x - current.x) ** 2 + (next.y - current.y) ** 2)
+            prev = current
+            current = next
+        }
+
+        return { endpoint: null, length }
+    }
+
+    // Step 3: Identify TRUE junctions
+    const trueJunctions: Point[] = []
+
+    for (const candidate of candidateJunctions) {
+        const neighbors = getNeighbors(candidate.x, candidate.y)
+
+        // Track which endpoints each branch reaches and the branch length
+        const branchResults: { endpoint: Point | null; length: number }[] = []
+
+        for (const neighbor of neighbors) {
+            const result = traceBranchToEndpoint(neighbor, candidate)
+            branchResults.push(result)
+        }
+
+        // Filter for meaningful branches (length >= MIN_BRANCH_LENGTH and reaches an endpoint)
+        const meaningfulBranches = branchResults.filter(
+            r => r.endpoint !== null && r.length >= MIN_BRANCH_LENGTH
+        )
+
+        // Count unique endpoints reached by meaningful branches
+        const uniqueEndpoints = new Set<string>()
+        for (const branch of meaningfulBranches) {
+            if (branch.endpoint) {
+                uniqueEndpoints.add(`${branch.endpoint.x},${branch.endpoint.y}`)
+            }
+        }
+
+        // TRUE JUNCTION: reaches at least 2 different endpoints via meaningful branches
+        if (uniqueEndpoints.size >= 2) {
+            trueJunctions.push(candidate)
+        }
+    }
+
+    // Step 4: Cluster adjacent true junctions and pick representatives
+    const displayJunctions: Point[] = []
+    const processedJunctions = new Set<string>()
+
+    for (const junction of trueJunctions) {
+        const key = `${junction.x},${junction.y}`
+        if (processedJunctions.has(key)) continue
+
+        // BFS to find cluster of adjacent true junctions
+        const cluster: Point[] = []
+        const queue: Point[] = [junction]
+        const trueJunctionSet = new Set(trueJunctions.map(j => `${j.x},${j.y}`))
+
+        while (queue.length > 0) {
+            const current = queue.shift()!
+            const currentKey = `${current.x},${current.y}`
+            if (processedJunctions.has(currentKey)) continue
+            processedJunctions.add(currentKey)
+            cluster.push(current)
+
+            // Check 8-neighbors for other true junctions
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dy === 0 && dx === 0) continue
+                    const nx = current.x + dx
+                    const ny = current.y + dy
+                    const neighborKey = `${nx},${ny}`
+                    if (trueJunctionSet.has(neighborKey) && !processedJunctions.has(neighborKey)) {
+                        queue.push({ x: nx, y: ny })
+                    }
+                }
+            }
+        }
+
+        // Pick center of cluster as representative
+        if (cluster.length > 0) {
+            const centerX = Math.round(cluster.reduce((sum, p) => sum + p.x, 0) / cluster.length)
+            const centerY = Math.round(cluster.reduce((sum, p) => sum + p.y, 0) / cluster.length)
+            // Find the cluster member closest to center
+            let bestDist = Infinity
+            let representative = cluster[0]
+            for (const p of cluster) {
+                const dist = Math.sqrt((p.x - centerX) ** 2 + (p.y - centerY) ** 2)
+                if (dist < bestDist) {
+                    bestDist = dist
+                    representative = p
+                }
+            }
+            displayJunctions.push(representative)
+        }
+    }
+
+    // Step 5: Extract branches using only meaningful nodes (endpoints + TRUE junctions)
+    // This gives branch counts that match the visual representation
+    const nodeSet = new Set<string>()
+    for (const ep of endpoints) nodeSet.add(`${ep.x},${ep.y}`)
+    for (const j of displayJunctions) nodeSet.add(`${j.x},${j.y}`)
+
+    const branches: SkeletonBranch[] = []
+    const visitedEdges = new Set<string>()
+    const meaningfulNodes = [...endpoints, ...displayJunctions]
+
+    for (const startNode of meaningfulNodes) {
+        const startNeighbors = getNeighbors(startNode.x, startNode.y)
+
+        for (const firstStep of startNeighbors) {
+            // Create edge key to avoid tracing same branch twice
+            const edgeKey = `${Math.min(startNode.x, firstStep.x)},${Math.min(startNode.y, firstStep.y)}-${Math.max(startNode.x, firstStep.x)},${Math.max(startNode.y, firstStep.y)}`
+            if (visitedEdges.has(edgeKey)) continue
+            visitedEdges.add(edgeKey)
+
+            // Trace branch until we hit another meaningful node
+            const pixels: Point[] = [startNode]
+            let current = firstStep
+            let prev = startNode
+            let length = Math.sqrt((current.x - prev.x) ** 2 + (current.y - prev.y) ** 2)
+            let radiusSum = dt[startNode.y]?.[startNode.x] || 0
+
+            const maxIterations = skeleton.length * (skeleton[0]?.length || 0)
+            let iterations = 0
+
+            while (iterations < maxIterations) {
+                iterations++
+                pixels.push(current)
+                radiusSum += dt[current.y]?.[current.x] || 0
+
+                // Mark edge as visited
+                const ek = `${Math.min(prev.x, current.x)},${Math.min(prev.y, current.y)}-${Math.max(prev.x, current.x)},${Math.max(prev.y, current.y)}`
+                visitedEdges.add(ek)
+
+                // Check if current is a meaningful node (endpoint or TRUE junction)
+                const currentKey = `${current.x},${current.y}`
+                if (nodeSet.has(currentKey)) {
+                    // Reached another meaningful node - branch complete
+                    break
+                }
+
+                // Find next pixel (not the one we came from)
+                const currentNeighbors = getNeighbors(current.x, current.y)
+                const nextCandidates = currentNeighbors.filter(n => n.x !== prev.x || n.y !== prev.y)
+
+                if (nextCandidates.length === 0) {
+                    // Dead end
+                    break
+                }
+
+                // If multiple candidates (we're at a raw junction that's not a TRUE junction),
+                // just pick the first one and continue through
+                const next = nextCandidates[0]
+                length += Math.sqrt((next.x - current.x) ** 2 + (next.y - current.y) ** 2)
+                prev = current
+                current = next
+            }
+
+            if (pixels.length >= 2) {
+                branches.push({
+                    pixels,
+                    length,
+                    meanRadius: radiusSum / pixels.length,
+                    startPoint: pixels[0],
+                    endPoint: pixels[pixels.length - 1]
+                })
+            }
+        }
+    }
+
+    // Step 6: Detect loops and find their "top" points
+    // A loop is a cycle in the skeleton graph
+    // Loop top = the point on the loop farthest from the connection points
+    const loopTops: Point[] = []
+    let loopCount = 0
+
+    // Find loop connection points: raw junctions that are NOT true junctions
+    // These are where loops connect to the main skeleton
+    const trueJunctionSet = new Set(displayJunctions.map(j => `${j.x},${j.y}`))
+    const loopConnectionCandidates = candidateJunctions.filter(
+        j => !trueJunctionSet.has(`${j.x},${j.y}`)
+    )
+
+    // Track which loop connection points we've already processed
+    const processedLoopPoints = new Set<string>()
+
+    for (const startPoint of loopConnectionCandidates) {
+        const startKey = `${startPoint.x},${startPoint.y}`
+        if (processedLoopPoints.has(startKey)) continue
+
+        // Try to find a loop starting from this point
+        // A loop exists if we can trace a path that returns to a point we've seen
+        const neighbors = getNeighbors(startPoint.x, startPoint.y)
+
+        for (let i = 0; i < neighbors.length; i++) {
+            for (let j = i + 1; j < neighbors.length; j++) {
+                // Try to find a path from neighbor[i] to neighbor[j] that doesn't go through startPoint
+                const pathResult = findPathBetween(
+                    neighbors[i],
+                    neighbors[j],
+                    startPoint,
+                    skeleton,
+                    rows,
+                    cols,
+                    candidateJunctions
+                )
+
+                if (pathResult.found && pathResult.path.length >= 3) {
+                    // Found a loop! The path + startPoint forms a cycle
+                    loopCount++
+
+                    // Find the top of the loop (point farthest from startPoint)
+                    let maxDist = 0
+                    let loopTop = pathResult.path[0]
+
+                    for (const p of pathResult.path) {
+                        const dist = Math.sqrt(
+                            (p.x - startPoint.x) ** 2 + (p.y - startPoint.y) ** 2
+                        )
+                        if (dist > maxDist) {
+                            maxDist = dist
+                            loopTop = p
+                        }
+                    }
+
+                    // Only add if it's not already an endpoint or junction
+                    const topKey = `${loopTop.x},${loopTop.y}`
+                    if (!endpointSet.has(topKey) && !candidateSet.has(topKey)) {
+                        loopTops.push(loopTop)
+                    }
+
+                    // Mark all junction candidates on this loop as processed
+                    for (const p of pathResult.path) {
+                        const pKey = `${p.x},${p.y}`
+                        if (candidateSet.has(pKey)) {
+                            processedLoopPoints.add(pKey)
+                        }
+                    }
+                    processedLoopPoints.add(startKey)
+                }
+            }
+        }
+    }
+
+    // Also check for loops at true junctions (loops that diverge to different endpoints)
+    for (const junction of displayJunctions) {
+        const jKey = `${junction.x},${junction.y}`
+        if (processedLoopPoints.has(jKey)) continue
+
+        const neighbors = getNeighbors(junction.x, junction.y)
+
+        for (let i = 0; i < neighbors.length; i++) {
+            for (let j = i + 1; j < neighbors.length; j++) {
+                const pathResult = findPathBetween(
+                    neighbors[i],
+                    neighbors[j],
+                    junction,
+                    skeleton,
+                    rows,
+                    cols,
+                    candidateJunctions
+                )
+
+                if (pathResult.found && pathResult.path.length >= 3) {
+                    loopCount++
+
+                    let maxDist = 0
+                    let loopTop = pathResult.path[0]
+
+                    for (const p of pathResult.path) {
+                        const dist = Math.sqrt(
+                            (p.x - junction.x) ** 2 + (p.y - junction.y) ** 2
+                        )
+                        if (dist > maxDist) {
+                            maxDist = dist
+                            loopTop = p
+                        }
+                    }
+
+                    const topKey = `${loopTop.x},${loopTop.y}`
+                    if (!endpointSet.has(topKey) && !candidateSet.has(topKey)) {
+                        loopTops.push(loopTop)
+                    }
+
+                    processedLoopPoints.add(jKey)
+                }
+            }
+        }
+    }
+
+    return {
+        endpoints,
+        junctions: candidateJunctions,  // All raw junctions (3+ neighbors) - for reference
+        branches,                        // Branches between meaningful nodes only
+        displayJunctions,                // TRUE junctions (red dots)
+        loopTops,                        // Top points of loops (to be shown as green dots)
+        loopCount                        // Number of detected loops
+    }
+}
+
+/**
+ * Helper: Find a path between two points without going through an excluded point
+ * Used for loop detection
+ */
+function findPathBetween(
+    start: Point,
+    end: Point,
+    exclude: Point,
+    skeleton: BinaryGrid,
+    rows: number,
+    cols: number,
+    junctions: Point[]
+): { found: boolean; path: Point[] } {
+    const visited = new Set<string>()
+    visited.add(`${exclude.x},${exclude.y}`)
+
+    const junctionSet = new Set(junctions.map(j => `${j.x},${j.y}`))
+    const endKey = `${end.x},${end.y}`
+
+    // BFS to find path
+    const queue: { point: Point; path: Point[] }[] = [{ point: start, path: [start] }]
+
+    const getNeighbors = (x: number, y: number): Point[] => {
+        const neighbors: Point[] = []
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                const ny = y + dy
+                const nx = x + dx
+                if (ny >= 0 && ny < rows && nx >= 0 && nx < cols) {
+                    if (skeleton[ny][nx] === 1) {
+                        neighbors.push({ x: nx, y: ny })
+                    }
+                }
+            }
+        }
+        return neighbors
+    }
+
+    const maxIterations = rows * cols
+    let iterations = 0
+
+    while (queue.length > 0 && iterations < maxIterations) {
+        iterations++
+        const { point, path } = queue.shift()!
+        const key = `${point.x},${point.y}`
+
+        if (visited.has(key)) continue
+        visited.add(key)
+
+        // Check if we reached the end
+        if (key === endKey) {
+            return { found: true, path }
+        }
+
+        // If we hit a junction (other than start), we might be leaving the loop
+        // Allow continuing through junctions but limit path length
+        if (path.length > 100) continue  // Prevent infinite loops
+
+        const neighbors = getNeighbors(point.x, point.y)
+        for (const n of neighbors) {
+            const nKey = `${n.x},${n.y}`
+            if (!visited.has(nKey)) {
+                queue.push({ point: n, path: [...path, n] })
+            }
+        }
+    }
+
+    return { found: false, path: [] }
+}
+
+/**
  * Extract individual branches from skeleton with their statistics
  * Each branch runs from endpoint/junction to endpoint/junction
+ * @deprecated Use analyzeSkeletonTopology() for consistent results
  */
 export function extractSkeletonBranches(skeleton: BinaryGrid, dt: FloatGrid): SkeletonBranch[] {
     const rows = skeleton.length
@@ -1927,7 +2440,7 @@ export function computeAllScagnostics(
 
     // Skeleton with pruning (as per LaTeX: 0.5%-2.0% of diagonal)
     const rawSkeleton = zhangSuenThinning(binaryGrid)
-    const pruneLength = diag * 0.01 // 1% of diagonal
+    const pruneLength = diag * 0.01 // 3% of diagonal (increased to reduce noise)
     const skeleton = pruneSkeletonBranches(rawSkeleton, pruneLength)
 
     const skeletonArcLength = computeSkeletonArcLength(skeleton)

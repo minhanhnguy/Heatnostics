@@ -21,13 +21,11 @@ import {
   euclideanDistanceTransform,
   zhangSuenThinning,
   pruneSkeletonBranches,
-  getSkeletonEndpoints,
-  getSkeletonJunctions,
   computeSkeletonArcLength,
   computeSkeletonLongestPath,
   computeSkeletonLongestPathData,
   computeAllScagnostics,
-  extractSkeletonBranches,
+  analyzeSkeletonTopology,
   type FloatGrid as FloatGridType,
   type BinaryGrid as BinaryGridType,
   type Point,
@@ -431,15 +429,25 @@ function SkeletonSection({
   dtGrid,
   skeleton,
   endpoints,
+  trueEndpoints,
+  loopTops,
+  loopCount,
   junctions,
+  rawJunctions,
+  branches,
   longestPathPoints,
   skeletonStats
 }: {
   binaryGrid: BinaryGridType
   dtGrid: FloatGridType
   skeleton: BinaryGridType
-  endpoints: Point[]
-  junctions: Point[]
+  endpoints: Point[]          // All green dots (true endpoints + loop tops)
+  trueEndpoints?: Point[]     // Just the true endpoints (degree=1)
+  loopTops?: Point[]          // Loop top points
+  loopCount?: number          // Number of detected loops
+  junctions: Point[]          // Display junctions (filtered/clustered for visualization)
+  rawJunctions?: Point[]      // Raw junctions (all pixels with 3+ neighbors)
+  branches?: { length: number }[]  // All branches
   longestPathPoints?: Point[]
   skeletonStats: { pixels: number; longestPath: number; arcLength: number }
 }) {
@@ -450,7 +458,7 @@ function SkeletonSection({
       <SectionHeader
         number="5"
         title="Distance Transform & Medial Axis"
-        subtitle="Zhang-Suen thinning with branch pruning (as per pipeline spec)"
+        subtitle="Zhang-Suen thinning with unified topology analysis"
       />
 
       <Equation
@@ -483,12 +491,12 @@ function SkeletonSection({
               label=""
             />
           </div>
-          <FigureCaption number="5c">Pruned medial axis S with endpoints (green) and junctions (red).</FigureCaption>
+          <FigureCaption number="5c">Pruned medial axis S with endpoints/loop tops (green) and junctions (red).</FigureCaption>
         </div>
       </div>
 
       <div className="mt-4">
-        <TableCaption number="2">Skeleton topology statistics (after pruning branches &lt; 1% diagonal).</TableCaption>
+        <TableCaption number="2">Skeleton topology statistics (unified analysis, pruning &lt; 1% diagonal).</TableCaption>
         <table className="w-full text-sm border-collapse max-w-md mx-auto">
           <tbody className="font-mono text-xs">
             <tr className="border-b border-gray-200">
@@ -500,13 +508,37 @@ function SkeletonSection({
               <td className="py-1.5 text-right text-gray-900">{skeletonStats.arcLength.toFixed(1)} px</td>
             </tr>
             <tr className="border-b border-gray-200">
-              <td className="py-1.5 text-gray-600">Endpoints (degree=1)</td>
-              <td className="py-1.5 text-right text-gray-900">{endpoints.length}</td>
+              <td className="py-1.5 text-gray-600">True endpoints (green, degree=1)</td>
+              <td className="py-1.5 text-right text-gray-900">{trueEndpoints?.length ?? endpoints.length}</td>
             </tr>
+            {loopCount !== undefined && loopCount > 0 && (
+              <tr className="border-b border-gray-200">
+                <td className="py-1.5 text-gray-600">Loops detected</td>
+                <td className="py-1.5 text-right text-gray-900">{loopCount}</td>
+              </tr>
+            )}
+            {loopTops && loopTops.length > 0 && (
+              <tr className="border-b border-gray-200">
+                <td className="py-1.5 text-gray-600">Loop tops (green, cycle apex)</td>
+                <td className="py-1.5 text-right text-gray-900">{loopTops.length}</td>
+              </tr>
+            )}
             <tr className="border-b border-gray-200">
-              <td className="py-1.5 text-gray-600">Junctions (branch points)</td>
+              <td className="py-1.5 text-gray-600">Junctions (red, true branch points)</td>
               <td className="py-1.5 text-right text-gray-900">{junctions.length}</td>
             </tr>
+            {rawJunctions && (
+              <tr className="border-b border-gray-200">
+                <td className="py-1.5 text-gray-600">Raw junctions (degree≥3)</td>
+                <td className="py-1.5 text-right text-gray-900">{rawJunctions.length}</td>
+              </tr>
+            )}
+            {branches && (
+              <tr className="border-b border-gray-200">
+                <td className="py-1.5 text-gray-600">Branches (paths between nodes)</td>
+                <td className="py-1.5 text-right text-gray-900">{branches.length}</td>
+              </tr>
+            )}
             <tr>
               <td className="py-1.5 text-gray-600">Longest path L_max</td>
               <td className="py-1.5 text-right text-gray-900">{skeletonStats.longestPath.toFixed(1)} px</td>
@@ -915,36 +947,46 @@ export default function Pipeline2Page() {
 
     // Prune short branches (1% of diagonal to remove noise, as per LaTeX spec)
     const diag = Math.sqrt(2) * gridSize
-    const pruneLength = diag * 0.01
+    const pruneLength = diag * 0.03
     const skeleton = pruneSkeletonBranches(rawSkeleton, pruneLength)
 
-    const endpoints = getSkeletonEndpoints(skeleton)
-    const junctions = getSkeletonJunctions(skeleton)
+    // Use unified topology analysis for consistent endpoints, junctions, and branches
+    const topology = analyzeSkeletonTopology(skeleton, dt)
+
     const skeletonPixels = countFilledCells(skeleton)
     const arcLength = computeSkeletonArcLength(skeleton)
-
-    // Extract branches for statistics
-    const branches = extractSkeletonBranches(skeleton, dt)
 
     // Compute longest path using BFS (same as lib function)
     const longestPath = computeSkeletonLongestPath(skeleton)
     const longestPathPoints = computeSkeletonLongestPathData(skeleton)
 
-    console.log("Skeleton Stats:", {
+    // Combine endpoints + loop tops for display (all shown as green dots)
+    const allEndpoints = [...topology.endpoints, ...topology.loopTops]
+
+    console.log("Skeleton Stats (Unified):", {
       longestPath,
       arcLength,
       ratio: longestPath / arcLength,
       pixels: skeletonPixels,
-      branches: branches.length
+      endpoints: topology.endpoints.length,
+      loopTops: topology.loopTops.length,
+      loops: topology.loopCount,
+      rawJunctions: topology.junctions.length,
+      displayJunctions: topology.displayJunctions.length,
+      branches: topology.branches.length
     })
 
     return {
       dt,
       skeleton,
       rawSkeleton,
-      endpoints,
-      junctions,
-      branches,
+      endpoints: allEndpoints,                 // Endpoints + loop tops (all green dots)
+      trueEndpoints: topology.endpoints,       // Just the real endpoints
+      loopTops: topology.loopTops,             // Just the loop tops
+      loopCount: topology.loopCount,           // Number of loops detected
+      junctions: topology.displayJunctions,    // TRUE junctions for display (red dots)
+      rawJunctions: topology.junctions,        // All raw junctions (for reference)
+      branches: topology.branches,             // Branches between meaningful nodes
       longestPathPoints,
       stats: { pixels: skeletonPixels, longestPath, arcLength }
     }
@@ -1056,7 +1098,12 @@ export default function Pipeline2Page() {
                 dtGrid={skeletonData.dt}
                 skeleton={skeletonData.skeleton}
                 endpoints={skeletonData.endpoints}
+                trueEndpoints={skeletonData.trueEndpoints}
+                loopTops={skeletonData.loopTops}
+                loopCount={skeletonData.loopCount}
                 junctions={skeletonData.junctions}
+                rawJunctions={skeletonData.rawJunctions}
+                branches={skeletonData.branches}
                 longestPathPoints={skeletonData.longestPathPoints}
                 skeletonStats={skeletonData.stats}
               />

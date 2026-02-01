@@ -136,9 +136,12 @@ export default function SkeletonCanvas({
             ctx.fillStyle = "#00fc43"
 
             for (const ep of endpoints) {
-                const x = ep.x * scale
-                const y = ep.y * scale
-                ctx.fillRect(x - 2, y - 2, 4, 4)
+                ctx.fillRect(
+                    Math.floor(ep.x * scale),
+                    Math.floor(ep.y * scale),
+                    Math.ceil(scale),
+                    Math.ceil(scale)
+                )
             }
         }
 
