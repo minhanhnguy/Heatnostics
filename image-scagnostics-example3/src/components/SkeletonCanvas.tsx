@@ -1,39 +1,29 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import type { Point, FloatGrid, BinaryGrid } from "@/lib/types"
+import type { BinaryGrid, Point } from "@/lib/types"
 
 interface SkeletonCanvasProps {
-    dtGrid: FloatGrid           // Distance transform (float)
-    skeleton: BinaryGrid         // Skeleton (binary)
-    endpoints?: Point[]          // Skeleton endpoints
-    junctions?: Point[]          // Skeleton junctions
+    binaryGrid: BinaryGrid           // Binary mask as background
+    skeleton: BinaryGrid             // Skeleton (binary)
+    endpoints?: Point[]              // Skeleton endpoints (green dots)
+    longestPathPoints?: Point[]      // Longest path (blue pixels)
     gridSize: number
     showSkeleton?: boolean
     showEndpoints?: boolean
-    showJunctions?: boolean
-    longestPathPoints?: Point[]
+    showLongestPath?: boolean
     label?: string
 }
 
-// Plasma colormap for DT
-function plasma(t: number): [number, number, number] {
-    const r = Math.floor(255 * Math.max(0, Math.min(1, 0.050 + t * (2.810 + t * (-2.420 + t * 0.560)))))
-    const g = Math.floor(255 * Math.max(0, Math.min(1, 0.030 + t * (0.090 + t * (2.090 + t * (-1.190))))))
-    const b = Math.floor(255 * Math.max(0, Math.min(1, 0.530 + t * (1.400 + t * (-3.860 + t * 2.930)))))
-    return [r, g, b]
-}
-
 export default function SkeletonCanvas({
-    dtGrid,
+    binaryGrid,
     skeleton,
     endpoints = [],
-    junctions = [],
+    longestPathPoints = [],
     gridSize,
     showSkeleton = true,
     showEndpoints = true,
-    showJunctions = true,
-    longestPathPoints = [],
+    showLongestPath = true,
     label
 }: SkeletonCanvasProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -42,13 +32,13 @@ export default function SkeletonCanvas({
     useEffect(() => {
         const canvas = canvasRef.current
         const container = containerRef.current
-        if (!canvas || !container || !dtGrid.length) return
+        if (!canvas || !container || !binaryGrid.length) return
 
         const ctx = canvas.getContext("2d")
         if (!ctx) return
 
-        const rows = dtGrid.length
-        const cols = dtGrid[0]?.length || 0
+        const rows = binaryGrid.length
+        const cols = binaryGrid[0]?.length || 0
 
         // Get container size
         const containerWidth = container.clientWidth
@@ -60,31 +50,59 @@ export default function SkeletonCanvas({
 
         const scale = displaySize / gridSize
 
-        // Find max DT value for normalization
-        let maxDT = 0
-        for (let y = 0; y < rows; y++) {
-            for (let x = 0; x < cols; x++) {
-                maxDT = Math.max(maxDT, dtGrid[y][x])
+        // Create a set of longest path pixels for fast lookup
+        const longestPathSet = new Set<string>()
+        if (showLongestPath && longestPathPoints) {
+            for (const p of longestPathPoints) {
+                longestPathSet.add(`${p.x},${p.y}`)
             }
         }
 
-        // Draw DT heatmap
+        // Create a set of endpoint pixels for fast lookup
+        const endpointSet = new Set<string>()
+        if (showEndpoints && endpoints) {
+            for (const p of endpoints) {
+                endpointSet.add(`${p.x},${p.y}`)
+            }
+        }
+
+        // Draw everything as pixels in the imageData
         const imageData = ctx.createImageData(cols, rows)
         for (let y = 0; y < rows; y++) {
             for (let x = 0; x < cols; x++) {
                 const idx = (y * cols + x) * 4
-                const normalized = maxDT > 0 ? dtGrid[y][x] / maxDT : 0
-                const [r, g, b] = plasma(normalized)
+                const key = `${x},${y}`
 
-                // Overlay skeleton in white
-                if (showSkeleton && skeleton[y]?.[x] === 1) {
+                // Priority: endpoints (green) > longest path (blue) > skeleton (white) > binary mask (gray) > background (black)
+                if (endpointSet.has(key)) {
+                    // Green for endpoints
+                    imageData.data[idx] = 0
+                    imageData.data[idx + 1] = 252
+                    imageData.data[idx + 2] = 67
+                }
+                else if (longestPathSet.has(key)) {
+                    // Blue for longest path
+                    imageData.data[idx] = 59
+                    imageData.data[idx + 1] = 130
+                    imageData.data[idx + 2] = 246
+                }
+                else if (showSkeleton && skeleton[y]?.[x] === 1) {
+                    // White for skeleton
                     imageData.data[idx] = 255
                     imageData.data[idx + 1] = 255
                     imageData.data[idx + 2] = 255
-                } else {
-                    imageData.data[idx] = r
-                    imageData.data[idx + 1] = g
-                    imageData.data[idx + 2] = b
+                }
+                else if (binaryGrid[y]?.[x] === 1) {
+                    // Gray for binary mask foreground
+                    imageData.data[idx] = 80
+                    imageData.data[idx + 1] = 80
+                    imageData.data[idx + 2] = 80
+                }
+                else {
+                    // Black for background
+                    imageData.data[idx] = 0
+                    imageData.data[idx + 1] = 0
+                    imageData.data[idx + 2] = 0
                 }
                 imageData.data[idx + 3] = 255
             }
@@ -101,51 +119,7 @@ export default function SkeletonCanvas({
             ctx.drawImage(offscreen, 0, 0, displaySize, displaySize)
         }
 
-        // Draw longest path (Blue line)
-        if (longestPathPoints && longestPathPoints.length > 0) {
-            ctx.strokeStyle = "#3b82f6" // Blue-500
-            ctx.lineWidth = 2
-            ctx.lineJoin = "round"
-            ctx.beginPath()
-
-            longestPathPoints.forEach((p, i) => {
-                const x = p.x * scale
-                const y = p.y * scale
-                if (i === 0) ctx.moveTo(x, y)
-                else ctx.lineTo(x, y)
-            })
-            ctx.stroke()
-        }
-
-        // Draw junctions (red pixels)
-        if (showJunctions && junctions.length > 0) {
-            ctx.fillStyle = "#ff0000"
-
-            for (const jp of junctions) {
-                ctx.fillRect(
-                    Math.floor(jp.x * scale),
-                    Math.floor(jp.y * scale),
-                    Math.ceil(scale),
-                    Math.ceil(scale)
-                )
-            }
-        }
-
-        // Draw endpoints (cyan pixels)
-        if (showEndpoints && endpoints.length > 0) {
-            ctx.fillStyle = "#00fc43"
-
-            for (const ep of endpoints) {
-                ctx.fillRect(
-                    Math.floor(ep.x * scale),
-                    Math.floor(ep.y * scale),
-                    Math.ceil(scale),
-                    Math.ceil(scale)
-                )
-            }
-        }
-
-    }, [dtGrid, skeleton, endpoints, junctions, gridSize, showSkeleton, showEndpoints, showJunctions, longestPathPoints])
+    }, [binaryGrid, skeleton, endpoints, longestPathPoints, gridSize, showSkeleton, showEndpoints, showLongestPath])
 
     return (
         <div ref={containerRef} className="w-full h-full flex flex-col items-center justify-center">

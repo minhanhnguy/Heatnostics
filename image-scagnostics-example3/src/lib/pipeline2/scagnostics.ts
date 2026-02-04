@@ -3,10 +3,9 @@
  */
 import type { FloatGrid, BinaryGrid, Polyline, AllScagnostics } from '../types'
 import { computeContinuousArea, computeContinuousPerimeter, computeSkinnyIQ } from './geometry'
-import { euclideanDistanceTransform } from './distanceTransform'
-import { zhangSuenThinning, pruneSkeletonBranches, computeSkeletonLongestPath, computeSkeletonArcLength, computeSkeletonWidthStats } from './skeleton'
+import { computeSkeletonLongestPath, computeSkeletonArcLength } from './skeleton'
 import { computeStructureTensor, computeCircularVariance } from './orientation'
-import { watershedBlobSegmentation, computeClumpyFromBlobs, countHoles, countConnectedComponents, countFilledCells } from './blobs'
+import { watershedBlobSegmentation, computeClumpyFromBlobs, countConnectedComponents, countFilledCells } from './blobs'
 import { spearmanCorrelation, computeOutlyingMahalanobis, computeSkewedPrincipalAxis, sampleSkeletonPath } from './statistics'
 
 function computeStringySimple(longestPath: number, totalSkeletonLength: number): number {
@@ -16,31 +15,24 @@ function computeStringySimple(longestPath: number, totalSkeletonLength: number):
 
 /**
  * Compute all 9 scagnostic metrics
+ * Now accepts a pre-computed skeleton to ensure consistency with display
  */
 export function computeAllScagnostics(
     floatGrid: FloatGrid,
     binaryGrid: BinaryGrid,
     contours: Polyline[],
-    convexHull: Polyline
+    convexHull: Polyline,
+    skeleton: BinaryGrid  // Pre-computed skeleton (same one used for display)
 ): AllScagnostics {
     const gridSize = floatGrid.length
-    const diag = Math.sqrt(2) * gridSize
 
     // Basic geometry from all contours
     const area = contours.reduce((sum, c) => sum + computeContinuousArea(c), 0)
     const perimeter = contours.reduce((sum, c) => sum + computeContinuousPerimeter(c), 0)
     const hullArea = computeContinuousArea(convexHull)
 
-    // Distance transform
-    const dt = euclideanDistanceTransform(binaryGrid)
-
-    // Skeleton with pruning
-    const rawSkeleton = zhangSuenThinning(binaryGrid)
-    const pruneLength = diag * 0.01
-    const skeleton = pruneSkeletonBranches(rawSkeleton, pruneLength)
-
+    // Use the provided skeleton (no need to recompute)
     const skeletonArcLength = computeSkeletonArcLength(skeleton)
-    const { meanRadius } = computeSkeletonWidthStats(skeleton, dt)
 
     // Structure tensor for striated
     const { orientation } = computeStructureTensor(floatGrid, 5)
@@ -60,7 +52,7 @@ export function computeAllScagnostics(
     // 3. CONVEX
     const convex = hullArea > 0 ? Math.min(1, area / hullArea) : 1
 
-    // 4. SKINNY
+    // 4. SKINNY (using isoperimetric quotient only)
     const skinny = computeSkinnyIQ(area, perimeter)
 
     // 5. CLUMPY

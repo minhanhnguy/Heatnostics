@@ -95,7 +95,110 @@ export function zhangSuenThinning(grid: BinaryGrid): BinaryGrid {
         }
     }
 
-    return current
+    // Post-process to ensure strictly 1-pixel width
+    return ensureOnePixelWidth(current)
+}
+
+/**
+ * Ensure skeleton is strictly 1-pixel wide by iteratively removing redundant pixels.
+ * Uses a connectivity-preserving approach: removes pixels that don't disconnect the skeleton.
+ */
+function ensureOnePixelWidth(skeleton: BinaryGrid): BinaryGrid {
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+    const result = skeleton.map(row => [...row])
+
+    // 8-connected neighbor offsets (ordered: NW, N, NE, E, SE, S, SW, W)
+    const dx8 = [-1, 0, 1, 1, 1, 0, -1, -1]
+    const dy8 = [-1, -1, -1, 0, 1, 1, 1, 0]
+
+    // Count 8-connected neighbors
+    const countNeighbors = (x: number, y: number): number => {
+        let count = 0
+        for (let i = 0; i < 8; i++) {
+            const nx = x + dx8[i]
+            const ny = y + dy8[i]
+            if (nx >= 0 && nx < cols && ny >= 0 && ny < rows && result[ny][nx] === 1) {
+                count++
+            }
+        }
+        return count
+    }
+
+    // Get neighbor pattern as 8-bit binary (for connectivity check)
+    const getNeighborPattern = (x: number, y: number): number => {
+        let pattern = 0
+        for (let i = 0; i < 8; i++) {
+            const nx = x + dx8[i]
+            const ny = y + dy8[i]
+            if (nx >= 0 && nx < cols && ny >= 0 && ny < rows && result[ny][nx] === 1) {
+                pattern |= (1 << i)
+            }
+        }
+        return pattern
+    }
+
+    // Count 0-1 transitions in the 8-neighborhood (clockwise)
+    // This tells us how many connected components surround the pixel
+    const countTransitions = (pattern: number): number => {
+        let transitions = 0
+        for (let i = 0; i < 8; i++) {
+            const curr = (pattern >> i) & 1
+            const next = (pattern >> ((i + 1) % 8)) & 1
+            if (curr === 0 && next === 1) transitions++
+        }
+        return transitions
+    }
+
+    // A pixel can be removed if:
+    // 1. It has 2+ neighbors (not an endpoint)
+    // 2. Removing it doesn't disconnect neighbors (transitions == 1)
+    // 3. It has neighbors on "opposite" sides (characteristic of thick sections)
+    const canRemove = (x: number, y: number): boolean => {
+        const neighbors = countNeighbors(x, y)
+        if (neighbors <= 1) return false  // Endpoint, keep it
+
+        const pattern = getNeighborPattern(x, y)
+        const transitions = countTransitions(pattern)
+
+        // Only 1 transition means all neighbors are in one connected group
+        // Removing this pixel won't disconnect them
+        if (transitions !== 1) return false
+
+        // Check if this is a "thick" pixel (has neighbors in both directions of an axis)
+        // North and South (bits 1 and 5)
+        // East and West (bits 3 and 7)
+        // NW and SE (bits 0 and 4)
+        // NE and SW (bits 2 and 6)
+        const hasNS = ((pattern >> 1) & 1) && ((pattern >> 5) & 1)
+        const hasEW = ((pattern >> 3) & 1) && ((pattern >> 7) & 1)
+        const hasNWSE = ((pattern >> 0) & 1) && ((pattern >> 4) & 1)
+        const hasNESW = ((pattern >> 2) & 1) && ((pattern >> 6) & 1)
+
+        // If neighbors exist on opposite sides, this is likely a thick section pixel
+        if (hasNS || hasEW || hasNWSE || hasNESW) return true
+
+        // Also remove if there are 4+ neighbors (definitely thick)
+        if (neighbors >= 4) return true
+
+        return false
+    }
+
+    let changed = true
+    while (changed) {
+        changed = false
+
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                if (result[y][x] === 1 && canRemove(x, y)) {
+                    result[y][x] = 0
+                    changed = true
+                }
+            }
+        }
+    }
+
+    return result
 }
 
 function getSkeletonEndpoints(skeleton: BinaryGrid): Point[] {
@@ -144,6 +247,112 @@ function getSkeletonJunctions(skeleton: BinaryGrid): Point[] {
     return junctions
 }
 
+/**
+ * Fill in "corridor" pixels along the path.
+ * Only includes adjacent skeleton pixels that are part of a thick corridor,
+ * not pixels that lead to separate branches.
+ * A pixel is considered a corridor pixel if most of its skeleton neighbors are already in the path.
+ */
+function fillPathCorridor(initialPath: Point[], skeleton: BinaryGrid): Point[] {
+    if (initialPath.length === 0) return []
+
+    const rows = skeleton.length
+    const cols = skeleton[0]?.length || 0
+
+    // Set of path pixels
+    const pathSet = new Set<string>()
+    for (const p of initialPath) {
+        pathSet.add(`${p.x},${p.y}`)
+    }
+
+    const result: Point[] = [...initialPath]
+
+    // Count how many skeleton neighbors a pixel has
+    const countSkeletonNeighbors = (x: number, y: number): number => {
+        let count = 0
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                const nx = x + dx
+                const ny = y + dy
+                if (nx >= 0 && nx < cols && ny >= 0 && ny < rows && skeleton[ny][nx] === 1) {
+                    count++
+                }
+            }
+        }
+        return count
+    }
+
+    // Count how many of a pixel's skeleton neighbors are in the path
+    const countPathNeighbors = (x: number, y: number): number => {
+        let count = 0
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                const nx = x + dx
+                const ny = y + dy
+                if (pathSet.has(`${nx},${ny}`)) {
+                    count++
+                }
+            }
+        }
+        return count
+    }
+
+    // Iteratively add corridor pixels until no more can be added
+    let changed = true
+    while (changed) {
+        changed = false
+        for (const p of [...result]) {
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dy === 0 && dx === 0) continue
+                    const nx = p.x + dx
+                    const ny = p.y + dy
+                    const nkey = `${nx},${ny}`
+
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
+                        skeleton[ny][nx] === 1 && !pathSet.has(nkey)) {
+                        // Only add if this pixel is a "corridor" pixel:
+                        // Most of its skeleton neighbors should already be in the path
+                        const skeletonNeighbors = countSkeletonNeighbors(nx, ny)
+                        const pathNeighbors = countPathNeighbors(nx, ny)
+
+                        // If at least half of skeleton neighbors are in path, it's a corridor pixel
+                        if (pathNeighbors >= skeletonNeighbors / 2 && pathNeighbors >= 2) {
+                            pathSet.add(nkey)
+                            result.push({ x: nx, y: ny })
+                            changed = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return result
+}
+
+/**
+ * Compute the longest path in the skeleton, returning the actual pixel coordinates.
+ *
+ * ALGORITHM CHOICE: BFS vs DFS
+ *
+ * DFS with backtracking would find the TRUE longest path (visiting maximum pixels),
+ * but has O(N!) worst-case complexity for skeletons with branches/loops, making it
+ * impractical for real-time use (causes page to hang for seconds/minutes).
+ *
+ * BFS is O(N) and finds a path from endpoint to the farthest reachable pixel.
+ * TRADEOFF: BFS may miss some skeleton pixels if there are parallel segments or
+ * branches, because it commits to the first path discovered and won't backtrack.
+ *
+ * For a perfectly 1-pixel-wide skeleton with no branches, BFS gives the same result
+ * as DFS. The difference only appears when the skeleton has extra pixels.
+ *
+ * POST-PROCESSING: After BFS finds the main path, we fill in any "corridor" pixels
+ * that are adjacent to the path but were missed. This only includes pixels that are
+ * part of the same corridor (not branch pixels). Maintains O(N) complexity.
+ */
 export function computeSkeletonLongestPathData(skeleton: BinaryGrid): Point[] {
     const endpoints = getSkeletonEndpoints(skeleton)
     if (endpoints.length === 0) return []
@@ -151,82 +360,119 @@ export function computeSkeletonLongestPathData(skeleton: BinaryGrid): Point[] {
     const rows = skeleton.length
     const cols = skeleton[0]?.length || 0
 
-    const bfs = (start: Point): Point[] => {
-        const visited = new Set<string>()
-        const queue: { p: Point; path: Point[] }[] = [{ p: start, path: [start] }]
-        let longest: Point[] = []
+    // BFS that tracks parent pointers to reconstruct the path
+    const bfsWithPath = (start: Point): { path: Point[], pixelCount: number } => {
+        const visited = new Map<string, Point | null>()
+        const queue: Point[] = [start]
+        visited.set(`${start.x},${start.y}`, null)
+
+        let farthest = start
+        let maxPixels = 1
 
         while (queue.length > 0) {
-            const { p, path } = queue.shift()!
-            const key = `${p.x},${p.y}`
-            if (visited.has(key)) continue
-            visited.add(key)
+            const current = queue.shift()!
 
-            if (path.length > longest.length) longest = path
+            // Count pixels in path to this point
+            let pixelCount = 0
+            let p: Point | null = current
+            while (p) {
+                pixelCount++
+                p = visited.get(`${p.x},${p.y}`) ?? null
+            }
 
+            if (pixelCount > maxPixels) {
+                maxPixels = pixelCount
+                farthest = current
+            }
+
+            // Explore neighbors
             for (let dy = -1; dy <= 1; dy++) {
                 for (let dx = -1; dx <= 1; dx++) {
                     if (dy === 0 && dx === 0) continue
-                    const nx = p.x + dx
-                    const ny = p.y + dy
+                    const nx = current.x + dx
+                    const ny = current.y + dy
+                    const nkey = `${nx},${ny}`
+
                     if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
-                        skeleton[ny][nx] === 1 && !visited.has(`${nx},${ny}`)) {
-                        queue.push({ p: { x: nx, y: ny }, path: [...path, { x: nx, y: ny }] })
+                        skeleton[ny][nx] === 1 && !visited.has(nkey)) {
+                        visited.set(nkey, current)
+                        queue.push({ x: nx, y: ny })
                     }
                 }
             }
         }
-        return longest
+
+        // Reconstruct path from start to farthest
+        const path: Point[] = []
+        let curr: Point | null = farthest
+        while (curr) {
+            path.unshift(curr)
+            curr = visited.get(`${curr.x},${curr.y}`) ?? null
+        }
+
+        return { path, pixelCount: maxPixels }
     }
 
-    let maxPath: Point[] = []
+    // Find the longest path from any endpoint
+    let bestPath: Point[] = []
+    let bestCount = 0
+
     for (const ep of endpoints) {
-        const path = bfs(ep)
-        if (path.length > maxPath.length) maxPath = path
+        const result = bfsWithPath(ep)
+        if (result.pixelCount > bestCount) {
+            bestCount = result.pixelCount
+            bestPath = result.path
+        }
     }
-    return maxPath
+
+    // Fill in any corridor pixels that BFS missed
+    return fillPathCorridor(bestPath, skeleton)
+}
+
+/**
+ * Compute the arc length of a set of path pixels.
+ * Sums the edge lengths between adjacent pixels in the path.
+ */
+function computePathArcLength(pathPoints: Point[]): number {
+    if (pathPoints.length === 0) return 0
+
+    const pathSet = new Set<string>()
+    for (const p of pathPoints) {
+        pathSet.add(`${p.x},${p.y}`)
+    }
+
+    let totalLength = 0
+    const visitedEdges = new Set<string>()
+
+    for (const p of pathPoints) {
+        // Check all 8 neighbors
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dy === 0 && dx === 0) continue
+                const nx = p.x + dx
+                const ny = p.y + dy
+                const nkey = `${nx},${ny}`
+
+                if (pathSet.has(nkey)) {
+                    // Create a unique edge key (smaller coord first)
+                    const edgeKey = `${Math.min(p.x, nx)},${Math.min(p.y, ny)}-${Math.max(p.x, nx)},${Math.max(p.y, ny)}`
+                    if (!visitedEdges.has(edgeKey)) {
+                        visitedEdges.add(edgeKey)
+                        totalLength += (dx !== 0 && dy !== 0) ? Math.SQRT2 : 1
+                    }
+                }
+            }
+        }
+    }
+
+    return totalLength
 }
 
 export function computeSkeletonLongestPath(skeleton: BinaryGrid): number {
-    const endpoints = getSkeletonEndpoints(skeleton)
-    if (endpoints.length === 0) return 0
-
-    const rows = skeleton.length
-    const cols = skeleton[0]?.length || 0
-
-    const bfs = (start: Point): number => {
-        const visited = new Set<string>()
-        const queue: { p: Point; dist: number }[] = [{ p: start, dist: 0 }]
-        let maxDist = 0
-
-        while (queue.length > 0) {
-            const { p, dist } = queue.shift()!
-            const key = `${p.x},${p.y}`
-            if (visited.has(key)) continue
-            visited.add(key)
-            maxDist = Math.max(maxDist, dist)
-
-            for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                    if (dy === 0 && dx === 0) continue
-                    const nx = p.x + dx
-                    const ny = p.y + dy
-                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows &&
-                        skeleton[ny][nx] === 1 && !visited.has(`${nx},${ny}`)) {
-                        const edgeDist = (dx !== 0 && dy !== 0) ? Math.SQRT2 : 1
-                        queue.push({ p: { x: nx, y: ny }, dist: dist + edgeDist })
-                    }
-                }
-            }
-        }
-        return maxDist
-    }
-
-    let longestPath = 0
-    for (const ep of endpoints) {
-        longestPath = Math.max(longestPath, bfs(ep))
-    }
-    return longestPath
+    // Get the filled path data (same as what's shown in blue)
+    const pathPoints = computeSkeletonLongestPathData(skeleton)
+    // Calculate arc length from the path points
+    return computePathArcLength(pathPoints)
 }
 
 export function pruneSkeletonBranches(skeleton: BinaryGrid, minLength: number): BinaryGrid {
@@ -366,7 +612,7 @@ function findPathBetween(
     return { found: false, path: [] }
 }
 
-export function analyzeSkeletonTopology(skeleton: BinaryGrid, dt: FloatGrid): SkeletonTopology {
+export function analyzeSkeletonTopology(skeleton: BinaryGrid, dt?: FloatGrid): SkeletonTopology {
     const rows = skeleton.length
     const cols = skeleton[0]?.length || 0
 
@@ -522,13 +768,13 @@ export function analyzeSkeletonTopology(skeleton: BinaryGrid, dt: FloatGrid): Sk
             let current = firstStep
             let prev = startNode
             let length = Math.sqrt((current.x - prev.x) ** 2 + (current.y - prev.y) ** 2)
-            let radiusSum = dt[startNode.y]?.[startNode.x] || 0
+            let radiusSum = dt?.[startNode.y]?.[startNode.x] ?? 1
             let iterations = 0
 
             while (iterations < rows * cols) {
                 iterations++
                 pixels.push(current)
-                radiusSum += dt[current.y]?.[current.x] || 0
+                radiusSum += dt?.[current.y]?.[current.x] ?? 1
 
                 const ek = `${Math.min(prev.x, current.x)},${Math.min(prev.y, current.y)}-${Math.max(prev.x, current.x)},${Math.max(prev.y, current.y)}`
                 visitedEdges.add(ek)

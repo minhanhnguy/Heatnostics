@@ -10,7 +10,6 @@ import Latex from "@/components/Latex"
 import {
   pointsToFloatGrid,
   pointsToBinaryGrid,
-  gaussianBlur,
   multiThresholdSegmentation,
   countFilledCells,
   getPercentileValue,
@@ -18,14 +17,12 @@ import {
   computeConvexHull,
   computeContinuousArea,
   computeContinuousPerimeter,
-  euclideanDistanceTransform,
   zhangSuenThinning,
   pruneSkeletonBranches,
   computeSkeletonArcLength,
   computeSkeletonLongestPath,
   computeSkeletonLongestPathData,
   computeAllScagnostics,
-  analyzeSkeletonTopology,
   type FloatGrid as FloatGridType,
   type BinaryGrid as BinaryGridType,
   type Point,
@@ -229,74 +226,17 @@ function SelectedPlotPanel({
   )
 }
 
-function SmoothingSection({
-  originalGrid,
-  smoothedGrid,
-  sigma,
-  onSigmaChange
-}: {
-  originalGrid: FloatGridType
-  smoothedGrid: FloatGridType
-  sigma: number
-  onSigmaChange: (sigma: number) => void
-}) {
-  return (
-    <section className="bg-white border border-gray-200 p-6">
-      <SectionHeader
-        number="2"
-        title="Gaussian Smoothing"
-        subtitle="Anti-aliasing for stable contour interpolation"
-      />
-
-      <div className="mb-4 flex items-center gap-4 text-sm">
-        <label className="text-gray-700">Smoothing parameter:</label>
-        <input
-          type="range"
-          min="0"
-          max="5"
-          step="0.5"
-          value={sigma}
-          onChange={(e) => onSigmaChange(parseFloat(e.target.value))}
-          className="w-24 accent-gray-700"
-        />
-        <span className="font-mono text-gray-900">σ = {sigma.toFixed(1)}</span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-6">
-        <div>
-          <div className="aspect-square border border-gray-300">
-            <FloatGrid grid={originalGrid} colorMap="viridis" label="" showStats={false} />
-          </div>
-          <FigureCaption number="2a">
-            Input density field I(x,y) from kernel density estimation.
-          </FigureCaption>
-        </div>
-        <div>
-          <div className="aspect-square border border-gray-300">
-            <FloatGrid grid={smoothedGrid} colorMap="viridis" label="" showStats={false} />
-          </div>
-          <FigureCaption number="2b">
-            Smoothed field I_s after Gaussian convolution with σ={sigma}.
-          </FigureCaption>
-        </div>
-      </div>
-
-      <Equation
-        formula="I_s = G_\sigma * I, \quad \text{where} \quad G_\sigma(x,y) = \frac{1}{2\pi\sigma^2} \exp\left(-\frac{x^2+y^2}{2\sigma^2}\right)"
-        label="1"
-      />
-    </section>
-  )
-}
+// Note: Gaussian smoothing section removed - KDE already provides sufficient smoothing
+// and percentile-based thresholding doesn't benefit from additional blur
 
 function ThresholdSection({
-  smoothedGrid,
+  densityGrid,
   thresholds
 }: {
-  smoothedGrid: FloatGridType
+  densityGrid: FloatGridType
   thresholds: { percentile: number; threshold: number; binary: BinaryGridType }[]
 }) {
-  const gridSize = smoothedGrid.length
+  const gridSize = densityGrid.length
 
   return (
     <section className="bg-white border border-gray-200 p-6">
@@ -342,17 +282,17 @@ function ThresholdSection({
 }
 
 function ContourSection({
-  smoothedGrid,
+  densityGrid,
   contours,
   convexHull,
   metrics
 }: {
-  smoothedGrid: FloatGridType
+  densityGrid: FloatGridType
   contours: Point[][]
   convexHull: Point[]
   metrics: { area: number; perimeter: number; hullArea: number; convex: number; skinny: number }
 }) {
-  const gridSize = smoothedGrid.length
+  const gridSize = densityGrid.length
 
   return (
     <section className="bg-white border border-gray-200 p-6">
@@ -366,7 +306,7 @@ function ContourSection({
         <div>
           <div className="aspect-square border border-gray-300">
             <ContourCanvas
-              grid={smoothedGrid}
+              grid={densityGrid}
               contours={contours}
               convexHull={convexHull}
               gridSize={gridSize}
@@ -426,125 +366,71 @@ function ContourSection({
 
 function SkeletonSection({
   binaryGrid,
-  dtGrid,
   skeleton,
   endpoints,
-  trueEndpoints,
-  loopTops,
-  loopCount,
-  junctions,
-  rawJunctions,
-  branches,
   longestPathPoints,
   skeletonStats
 }: {
   binaryGrid: BinaryGridType
-  dtGrid: FloatGridType
   skeleton: BinaryGridType
-  endpoints: Point[]          // All green dots (true endpoints + loop tops)
-  trueEndpoints?: Point[]     // Just the true endpoints (degree=1)
-  loopTops?: Point[]          // Loop top points
-  loopCount?: number          // Number of detected loops
-  junctions: Point[]          // Display junctions (filtered/clustered for visualization)
-  rawJunctions?: Point[]      // Raw junctions (all pixels with 3+ neighbors)
-  branches?: { length: number }[]  // All branches
-  longestPathPoints?: Point[]
-  skeletonStats: { pixels: number; longestPath: number; arcLength: number }
+  endpoints: Point[]
+  longestPathPoints: Point[]
+  skeletonStats: { pixels: number; longestPath: number; arcLength: number; stringy: number; endpointCount: number }
 }) {
   const gridSize = binaryGrid.length
 
   return (
     <section className="bg-white border border-gray-200 p-6">
       <SectionHeader
-        number="5"
-        title="Distance Transform & Medial Axis"
-        subtitle="Zhang-Suen thinning with unified topology analysis"
+        number="4"
+        title="Medial Axis Extraction"
+        subtitle="Zhang-Suen thinning algorithm"
       />
 
-      <Equation
-        formula="d(x,y) = \min_{(u,v) \in \text{background}} \|(x,y) - (u,v)\|_2"
-        label="3"
-      />
-
-      <div className="grid grid-cols-3 gap-3">
-        <div>
-          <div className="aspect-square border border-gray-300">
-            <BinaryGrid grid={binaryGrid} size={gridSize} />
-          </div>
-          <FigureCaption number="5a">Binary mask M at P{PRIMARY_PERCENTILE}.</FigureCaption>
-        </div>
-        <div>
-          <div className="aspect-square border border-gray-300">
-            <FloatGrid grid={dtGrid} colorMap="plasma" label="" showStats={false} />
-          </div>
-          <FigureCaption number="5b">Euclidean distance transform d(x,y).</FigureCaption>
-        </div>
+      <div className="grid grid-cols-2 gap-6">
         <div>
           <div className="aspect-square border border-gray-300">
             <SkeletonCanvas
-              dtGrid={dtGrid}
+              binaryGrid={binaryGrid}
               skeleton={skeleton}
               endpoints={endpoints}
-              junctions={junctions}
               longestPathPoints={longestPathPoints}
               gridSize={gridSize}
               label=""
             />
           </div>
-          <FigureCaption number="5c">Pruned medial axis S with endpoints/loop tops (green) and junctions (red).</FigureCaption>
+          <FigureCaption number="4a">
+            Medial axis S (white) with longest path L_max (blue) and endpoints (green).
+          </FigureCaption>
         </div>
-      </div>
 
-      <div className="mt-4">
-        <TableCaption number="2">Skeleton topology statistics (unified analysis, pruning &lt; 1% diagonal).</TableCaption>
-        <table className="w-full text-sm border-collapse max-w-md mx-auto">
-          <tbody className="font-mono text-xs">
-            <tr className="border-b border-gray-200">
-              <td className="py-1.5 text-gray-600">Skeleton pixels</td>
-              <td className="py-1.5 text-right text-gray-900">{skeletonStats.pixels}</td>
-            </tr>
-            <tr className="border-b border-gray-200">
-              <td className="py-1.5 text-gray-600">Arc length L</td>
-              <td className="py-1.5 text-right text-gray-900">{skeletonStats.arcLength.toFixed(1)} px</td>
-            </tr>
-            <tr className="border-b border-gray-200">
-              <td className="py-1.5 text-gray-600">True endpoints (green, degree=1)</td>
-              <td className="py-1.5 text-right text-gray-900">{trueEndpoints?.length ?? endpoints.length}</td>
-            </tr>
-            {loopCount !== undefined && loopCount > 0 && (
+        <div>
+          <TableCaption number="2">Skeleton statistics (pruning &lt; 1% diagonal).</TableCaption>
+          <table className="w-full text-sm border-collapse">
+            <tbody className="font-mono text-xs">
               <tr className="border-b border-gray-200">
-                <td className="py-1.5 text-gray-600">Loops detected</td>
-                <td className="py-1.5 text-right text-gray-900">{loopCount}</td>
+                <td className="py-1.5 text-gray-600">Skeleton pixels</td>
+                <td className="py-1.5 text-right text-gray-900">{skeletonStats.pixels}</td>
               </tr>
-            )}
-            {loopTops && loopTops.length > 0 && (
               <tr className="border-b border-gray-200">
-                <td className="py-1.5 text-gray-600">Loop tops (green, cycle apex)</td>
-                <td className="py-1.5 text-right text-gray-900">{loopTops.length}</td>
+                <td className="py-1.5 text-gray-600">Arc length L</td>
+                <td className="py-1.5 text-right text-gray-900">{skeletonStats.arcLength.toFixed(1)} px</td>
               </tr>
-            )}
-            <tr className="border-b border-gray-200">
-              <td className="py-1.5 text-gray-600">Junctions (red, true branch points)</td>
-              <td className="py-1.5 text-right text-gray-900">{junctions.length}</td>
-            </tr>
-            {rawJunctions && (
               <tr className="border-b border-gray-200">
-                <td className="py-1.5 text-gray-600">Raw junctions (degree≥3)</td>
-                <td className="py-1.5 text-right text-gray-900">{rawJunctions.length}</td>
+                <td className="py-1.5 text-gray-600">Endpoints (green)</td>
+                <td className="py-1.5 text-right text-gray-900">{skeletonStats.endpointCount}</td>
               </tr>
-            )}
-            {branches && (
               <tr className="border-b border-gray-200">
-                <td className="py-1.5 text-gray-600">Branches (paths between nodes)</td>
-                <td className="py-1.5 text-right text-gray-900">{branches.length}</td>
+                <td className="py-1.5 text-gray-600">Longest path L_max (blue)</td>
+                <td className="py-1.5 text-right text-gray-900">{skeletonStats.longestPath.toFixed(1)} px</td>
               </tr>
-            )}
-            <tr>
-              <td className="py-1.5 text-gray-600">Longest path L_max</td>
-              <td className="py-1.5 text-right text-gray-900">{skeletonStats.longestPath.toFixed(1)} px</td>
-            </tr>
-          </tbody>
-        </table>
+              <tr>
+                <td className="py-1.5 text-gray-600 font-semibold">Stringy (L_max / L)</td>
+                <td className="py-1.5 text-right text-gray-900 font-semibold">{skeletonStats.stringy.toFixed(4)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   )
@@ -652,11 +538,11 @@ function FormulasSection() {
     },
     {
       metric: "Skinny",
-      formula: "\\lambda_1(1-IQ) + \\lambda_2\\frac{\\sigma_r^2}{\\bar{r}^2}",
-      description: "IQ component + medial width variance",
-      original: "1 - 4πA/P² combined with width variability",
+      formula: "1 - \\frac{4\\pi A}{P^2}",
+      description: "Isoperimetric quotient (normalized area-perimeter ratio)",
+      original: "Ratio of perimeter to area (corrected for scale)",
       assessment: "Excellent",
-      notes: "As per LaTeX: combines isoperimetric quotient (1 - 4πA/P²) with medial axis width variance (Var_r/r̄²). λ₁=0.7, λ₂=0.3 for balanced measure."
+      notes: "Standard shape compactness measure. Captures how thin the shape is relative to a circle of equal area."
     },
     {
       metric: "Clumpy",
@@ -772,7 +658,6 @@ function FormulasSection() {
 export default function Pipeline2Page() {
   const [dataset, setDataset] = useState<DatasetInfo | null>(null)
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
-  const [smoothingSigma, setSmoothingSigma] = useState(1.5)
   const [loading, setLoading] = useState(true)
   const [isDownloading, setIsDownloading] = useState(false)
 
@@ -803,28 +688,33 @@ export default function Pipeline2Page() {
 
       for (const plot of dataset.scatterplots) {
         // Replicate pipeline logic for each plot
-        const original = pointsToFloatGrid(plot.points, gridSize, 5.0)
-        const smoothed = gaussianBlur(original, smoothingSigma)
+        const densityGrid = pointsToFloatGrid(plot.points, gridSize, 5.0)
 
-        // Thresholding
-        const thresholds = multiThresholdSegmentation(smoothed, [60, 70, 80, 90])
+        // Thresholding (no blur needed - KDE provides smoothing, percentile is rank-based)
+        const thresholds = multiThresholdSegmentation(densityGrid, [60, 70, 80, 90])
         const binary = thresholds.find(t => t.percentile === PRIMARY_PERCENTILE)?.binary
         if (!binary) continue
 
         // Contours
-        const thresholdVal = getPercentileValue(smoothed, PRIMARY_PERCENTILE)
-        const contours = marchingSquares(smoothed, thresholdVal)
+        const thresholdVal = getPercentileValue(densityGrid, PRIMARY_PERCENTILE)
+        const contours = marchingSquares(densityGrid, thresholdVal)
 
         // Convex Hull from all points
         const allPoints = contours.flat()
         const convexHull = computeConvexHull(allPoints)
 
+        // Skeleton
+        const diag = Math.sqrt(2) * gridSize
+        const rawSkeleton = zhangSuenThinning(binary)
+        const skeleton = pruneSkeletonBranches(rawSkeleton, diag * 0.01)
+
         // Compute Scagnostics
         const scagnostics = computeAllScagnostics(
-          smoothed,
+          densityGrid,
           binary,
           contours,
-          convexHull
+          convexHull,
+          skeleton
         )
 
         const row = [
@@ -888,7 +778,8 @@ export default function Pipeline2Page() {
 
   const gridSize = dataset?.grid_size || 256
 
-  const originalGrid = useMemo(() => {
+  // Density grid from KDE - no additional blur needed
+  const densityGrid = useMemo(() => {
     if (!selectedPlot) return []
     return pointsToFloatGrid(selectedPlot.points, gridSize, 5.0)
   }, [selectedPlot, gridSize])
@@ -898,22 +789,17 @@ export default function Pipeline2Page() {
     return pointsToBinaryGrid(selectedPlot.points, gridSize)
   }, [selectedPlot, gridSize])
 
-  const smoothedGrid = useMemo(() => {
-    if (!originalGrid.length) return []
-    return gaussianBlur(originalGrid, smoothingSigma)
-  }, [originalGrid, smoothingSigma])
-
   const thresholds = useMemo(() => {
-    if (!smoothedGrid.length) return []
-    return multiThresholdSegmentation(smoothedGrid, [60, 70, 80, 90])
-  }, [smoothedGrid])
+    if (!densityGrid.length) return []
+    return multiThresholdSegmentation(densityGrid, [60, 70, 80, 90])
+  }, [densityGrid])
 
   const contourData = useMemo(() => {
-    if (!smoothedGrid.length) return { contours: [], convexHull: [], metrics: null }
+    if (!densityGrid.length) return { contours: [], convexHull: [], metrics: null }
 
     const pBinary = thresholds.find(t => t.percentile === PRIMARY_PERCENTILE)?.binary
-    const threshold = getPercentileValue(smoothedGrid, PRIMARY_PERCENTILE)
-    const contours = marchingSquares(smoothedGrid, threshold)
+    const threshold = getPercentileValue(densityGrid, PRIMARY_PERCENTILE)
+    const contours = marchingSquares(densityGrid, threshold)
 
     // Use all contours for area and perimeter
     const area = contours.reduce((sum, c) => sum + computeContinuousArea(c), 0)
@@ -936,73 +822,172 @@ export default function Pipeline2Page() {
         skinny: perimeter > 0 ? Math.max(0, 1 - Math.sqrt(4 * Math.PI * area) / perimeter) : 0
       }
     }
-  }, [smoothedGrid, thresholds])
+  }, [densityGrid, thresholds])
 
   const skeletonData = useMemo(() => {
     const pBinary = thresholds.find(t => t.percentile === PRIMARY_PERCENTILE)?.binary
     if (!pBinary || !pBinary.length) return null
 
-    const dt = euclideanDistanceTransform(pBinary)
     const rawSkeleton = zhangSuenThinning(pBinary)
 
-    // Prune short branches (1% of diagonal to remove noise, as per LaTeX spec)
+    // Prune short branches (1% of diagonal to remove noise)
     const diag = Math.sqrt(2) * gridSize
-    const pruneLength = diag * 0.03
-    const skeleton = pruneSkeletonBranches(rawSkeleton, pruneLength)
+    const pruneLength = diag * 0.01
+    let skeleton = pruneSkeletonBranches(rawSkeleton, pruneLength)
 
-    // Use unified topology analysis for consistent endpoints, junctions, and branches
-    const topology = analyzeSkeletonTopology(skeleton, dt)
+    // Ensure each connected component in binary mask has at least one skeleton pixel
+    // This prevents compact circular blobs from losing their skeleton entirely
+    const rows = pBinary.length
+    const cols = pBinary[0]?.length || 0
 
+    // Find connected components in binary mask
+    const componentLabels: number[][] = Array(rows).fill(null).map(() => Array(cols).fill(0))
+    let numComponents = 0
+
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        if (pBinary[y][x] === 1 && componentLabels[y][x] === 0) {
+          numComponents++
+          // BFS to label this component
+          const queue: Point[] = [{ x, y }]
+          componentLabels[y][x] = numComponents
+
+          while (queue.length > 0) {
+            const p = queue.shift()!
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue
+                const ny = p.y + dy
+                const nx = p.x + dx
+                if (ny >= 0 && ny < rows && nx >= 0 && nx < cols &&
+                  pBinary[ny][nx] === 1 && componentLabels[ny][nx] === 0) {
+                  componentLabels[ny][nx] = numComponents
+                  queue.push({ x: nx, y: ny })
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Check if each component has skeleton pixels; if not, add from raw skeleton
+    for (let c = 1; c <= numComponents; c++) {
+      let hasSkeletonPixel = false
+      let rawSkeletonPixels: Point[] = []
+
+      for (let y = 0; y < rows && !hasSkeletonPixel; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (componentLabels[y][x] === c) {
+            if (skeleton[y][x] === 1) {
+              hasSkeletonPixel = true
+              break
+            }
+            if (rawSkeleton[y][x] === 1) {
+              rawSkeletonPixels.push({ x, y })
+            }
+          }
+        }
+      }
+
+      // If no skeleton pixel for this component, restore raw skeleton pixels
+      if (!hasSkeletonPixel && rawSkeletonPixels.length > 0) {
+        // Restore all raw skeleton pixels for this component
+        for (const p of rawSkeletonPixels) {
+          skeleton[p.y][p.x] = 1
+        }
+      }
+    }
+
+    // Compute skeleton metrics
     const skeletonPixels = countFilledCells(skeleton)
     const arcLength = computeSkeletonArcLength(skeleton)
-
-    // Compute longest path using BFS (same as lib function)
     const longestPath = computeSkeletonLongestPath(skeleton)
+    const stringy = arcLength > 0 ? Math.min(1, longestPath / arcLength) : 0
+
+    // Find endpoints and loop tips (reuse rows/cols from above)
+    const endpoints: Point[] = []
+
+    // 8-connected neighbor offsets
+    const dx8 = [-1, 0, 1, 1, 1, 0, -1, -1]
+    const dy8 = [-1, -1, -1, 0, 1, 1, 1, 0]
+
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        if (skeleton[y][x] === 1) {
+          // Get all neighbor positions
+          const neighbors: number[] = []
+          for (let i = 0; i < 8; i++) {
+            const ny = y + dy8[i]
+            const nx = x + dx8[i]
+            if (ny >= 0 && ny < rows && nx >= 0 && nx < cols && skeleton[ny][nx] === 1) {
+              neighbors.push(i)
+            }
+          }
+
+          // Case 1: True endpoint (exactly 1 neighbor)
+          if (neighbors.length === 1) {
+            endpoints.push({ x, y })
+          }
+          // Case 2: Loop tip (exactly 2 neighbors that are adjacent in the 8-ring)
+          // This catches the apex of tiny loops where both neighbors are next to each other
+          else if (neighbors.length === 2) {
+            const [n1, n2] = neighbors
+            // Check if neighbors are adjacent in the 8-connected ring
+            // Adjacent means indices differ by 1 (or 7 for wrap-around)
+            const diff = Math.abs(n1 - n2)
+            if (diff === 1 || diff === 7) {
+              // This is a sharp corner/loop tip - treat as endpoint
+              endpoints.push({ x, y })
+            }
+          }
+        }
+      }
+    }
+
+    // Compute longest path points for visualization
     const longestPathPoints = computeSkeletonLongestPathData(skeleton)
 
-    // Combine endpoints + loop tops for display (all shown as green dots)
-    const allEndpoints = [...topology.endpoints, ...topology.loopTops]
-
-    console.log("Skeleton Stats (Unified):", {
-      longestPath,
-      arcLength,
-      ratio: longestPath / arcLength,
+    console.log("Skeleton Stats:", {
       pixels: skeletonPixels,
-      endpoints: topology.endpoints.length,
-      loopTops: topology.loopTops.length,
-      loops: topology.loopCount,
-      rawJunctions: topology.junctions.length,
-      displayJunctions: topology.displayJunctions.length,
-      branches: topology.branches.length
+      arcLength,
+      longestPath,
+      stringy,
+      endpoints: endpoints.length
     })
 
     return {
-      dt,
       skeleton,
-      rawSkeleton,
-      endpoints: allEndpoints,                 // Endpoints + loop tops (all green dots)
-      trueEndpoints: topology.endpoints,       // Just the real endpoints
-      loopTops: topology.loopTops,             // Just the loop tops
-      loopCount: topology.loopCount,           // Number of loops detected
-      junctions: topology.displayJunctions,    // TRUE junctions for display (red dots)
-      rawJunctions: topology.junctions,        // All raw junctions (for reference)
-      branches: topology.branches,             // Branches between meaningful nodes
+      endpoints,
       longestPathPoints,
-      stats: { pixels: skeletonPixels, longestPath, arcLength }
+      stats: { pixels: skeletonPixels, longestPath, arcLength, stringy, endpointCount: endpoints.length }
     }
   }, [thresholds, gridSize])
 
   const allScagnostics = useMemo(() => {
     const pBinary = thresholds.find(t => t.percentile === PRIMARY_PERCENTILE)?.binary
-    if (!smoothedGrid.length || !pBinary || !contourData.contours.length) return null
+    if (!densityGrid.length || !pBinary || !contourData.contours.length || !skeletonData) return null
 
-    return computeAllScagnostics(
-      smoothedGrid,
+    // Pass the same skeleton used for display to ensure consistency
+    const result = computeAllScagnostics(
+      densityGrid,
       pBinary,
       contourData.contours,
-      contourData.convexHull
+      contourData.convexHull,
+      skeletonData.skeleton
     )
-  }, [smoothedGrid, thresholds, contourData])
+
+    // Debug: compare the two stringy values
+    console.log("Stringy comparison:", {
+      fromSkeletonData: skeletonData.stats.stringy,
+      fromScagnostics: result.stringy,
+      match: skeletonData.stats.stringy === result.stringy,
+      arcLength: skeletonData.stats.arcLength,
+      longestPath: skeletonData.stats.longestPath
+    })
+
+    return result
+  }, [densityGrid, thresholds, contourData, skeletonData])
 
   if (loading) {
     return (
@@ -1071,21 +1056,14 @@ export default function Pipeline2Page() {
               gridSize={gridSize}
             />
 
-            <SmoothingSection
-              originalGrid={originalGrid}
-              smoothedGrid={smoothedGrid}
-              sigma={smoothingSigma}
-              onSigmaChange={setSmoothingSigma}
-            />
-
             <ThresholdSection
-              smoothedGrid={smoothedGrid}
+              densityGrid={densityGrid}
               thresholds={thresholds}
             />
 
             {contourData.metrics && (
               <ContourSection
-                smoothedGrid={smoothedGrid}
+                densityGrid={densityGrid}
                 contours={contourData.contours}
                 convexHull={contourData.convexHull}
                 metrics={contourData.metrics}
@@ -1095,15 +1073,8 @@ export default function Pipeline2Page() {
             {skeletonData && thresholds.find(t => t.percentile === PRIMARY_PERCENTILE)?.binary && (
               <SkeletonSection
                 binaryGrid={thresholds.find(t => t.percentile === PRIMARY_PERCENTILE)!.binary}
-                dtGrid={skeletonData.dt}
                 skeleton={skeletonData.skeleton}
                 endpoints={skeletonData.endpoints}
-                trueEndpoints={skeletonData.trueEndpoints}
-                loopTops={skeletonData.loopTops}
-                loopCount={skeletonData.loopCount}
-                junctions={skeletonData.junctions}
-                rawJunctions={skeletonData.rawJunctions}
-                branches={skeletonData.branches}
                 longestPathPoints={skeletonData.longestPathPoints}
                 skeletonStats={skeletonData.stats}
               />
